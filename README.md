@@ -149,21 +149,34 @@ To run this project, you must be in an environment capable of running Mininet (t
 Running the full system requires opening multiple terminal windows to run the components simultaneously.
 
 ### Terminal 1: Start the Ryu Controller
-You need to run Ryu with the REST topology application enabled.
+We run Ryu with the REST topology application enabled (without a learning switch to prevent broadcast storms).
 ```bash
 cd sdn_env
-ryu-manager ryu.app.simple_switch_13 ryu.app.ofctl_rest ryu.topology.switches
+./start_controller.sh
+# OR manually:
+# ryu-manager ryu.app.ofctl_rest ryu.app.rest_topology --observe-links
 ```
 
 ### Terminal 2: Start Mininet Topology
-Start the Mininet network. This requires `sudo` privileges.
+Start the highly redundant Mininet network. This requires `sudo` privileges.
 ```bash
 cd sdn_env
 sudo python3 topology.py
 ```
 *(Leave this running. You will get a `mininet>` prompt which you can use later to generate traffic).*
 
-### Terminal 3: Start the Digital Twin & Dashboard
+### Terminal 3: Initialize Proactive Static Routing
+Wait about 10 seconds for Ryu to discover all the links, then run the startup routing script. This script acts as a proactive SDN controller, computing shortest paths and pre-installing flow rules for all hosts to ensure the network is loop-free and routed correctly.
+```bash
+python sdn_env/init_routing.py
+```
+
+### Terminal 4: Start the Digital Twin Engine
+```bash
+python twin/digital_twin.py
+```
+
+### Terminal 5: Start the Dashboard
 ```bash
 cd dashboard
 python3 app.py

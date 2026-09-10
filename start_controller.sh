@@ -1,2 +1,3 @@
 #!/bin/bash
-~/venv/bin/ryu-manager ryu.app.simple_switch_stp_13 ryu.app.ofctl_rest ryu.app.rest_topology --observe-links
+echo "Starting Ryu Controller (REST API only, no learning switch)..."
+~/venv/bin/ryu-manager ryu.app.ofctl_rest ryu.app.rest_topology --observe-links
