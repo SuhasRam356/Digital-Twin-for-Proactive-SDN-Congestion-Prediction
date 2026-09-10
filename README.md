@@ -168,18 +168,18 @@ sudo python3 topology.py
 ### Terminal 3: Initialize Proactive Static Routing
 Wait about 10 seconds for Ryu to discover all the links, then run the startup routing script. This script acts as a proactive SDN controller, computing shortest paths and pre-installing flow rules for all hosts to ensure the network is loop-free and routed correctly.
 ```bash
-python sdn_env/init_routing.py
+~/venv/bin/python3 sdn_env/init_routing.py
 ```
 
 ### Terminal 4: Start the Digital Twin Engine
 ```bash
-python twin/digital_twin.py
+~/venv/bin/python3 twin/digital_twin.py
 ```
 
 ### Terminal 5: Start the Dashboard
 ```bash
 cd dashboard
-python3 app.py
+~/venv/bin/python3 app.py
 ```
 Once started, the dashboard will be available at `http://localhost:5000`.
 
