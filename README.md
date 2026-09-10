@@ -171,12 +171,8 @@ Wait about 10 seconds for Ryu to discover all the links, then run the startup ro
 ~/venv/bin/python3 sdn_env/init_routing.py
 ```
 
-### Terminal 4: Start the Digital Twin Engine
-```bash
-~/venv/bin/python3 twin/digital_twin.py
-```
-
-### Terminal 5: Start the Dashboard
+### Terminal 4: Start the Dashboard
+The Flask app will automatically spawn the Digital Twin Engine in a background thread.
 ```bash
 cd dashboard
 ~/venv/bin/python3 app.py
