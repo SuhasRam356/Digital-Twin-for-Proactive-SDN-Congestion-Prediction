@@ -1,8 +1,9 @@
 import networkx as nx
 
 class DecisionEngine:
-    def __init__(self, threshold=85.0):
-        self.threshold = threshold
+    def __init__(self, trigger_threshold=40.0, safety_threshold=85.0):
+        self.trigger_threshold = trigger_threshold    # when to start looking for a reroute
+        self.safety_threshold = safety_threshold      # max util to accept a candidate as "safe enough"
 
     def decide_reroute(self, graph, congested_link, flow_data, port_map):
         """
@@ -68,11 +69,11 @@ class DecisionEngine:
                 best_path = path
 
         # 4. Pick best
-        if best_path and best_max_util < self.threshold:
+        if best_path and best_max_util < self.safety_threshold:
             print(f"[DecisionEngine] Selected path {best_path} with simulated max util {round(best_max_util,1)}%")
             return best_path, best_max_util
             
-        print("[DecisionEngine] No candidate path is safe (all exceed threshold).")
+        print(f"[DecisionEngine] No candidate path is safe (all exceed {self.safety_threshold}% safety threshold).")
         return None, None
 
     def _find_attachment_switch(self, graph, mac):

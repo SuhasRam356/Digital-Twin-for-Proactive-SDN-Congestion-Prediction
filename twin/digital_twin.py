@@ -44,12 +44,12 @@ class DigitalTwin:
         self.port_map = {}
         
         # Phase 4 components
-        # In baseline mode (no rerouting), we set the threshold to >100% so it never triggers.
+        # In baseline mode (no rerouting), we set trigger_threshold to >100% so it never fires.
         if os.environ.get("TWIN_BASELINE_MODE") == "1":
             print("[Twin] BASELINE MODE ENABLED: Proactive rerouting is OFF.")
-            self.decision_engine = DecisionEngine(threshold=101.0)
+            self.decision_engine = DecisionEngine(trigger_threshold=101.0)
         else:
-            self.decision_engine = DecisionEngine(threshold=40.0)
+            self.decision_engine = DecisionEngine(trigger_threshold=40.0, safety_threshold=85.0)
         self.actuator = Actuator(self.controller_url)
         self.active_reroutes = []
 
@@ -327,7 +327,7 @@ class DigitalTwin:
                 continue
                 
             pred_util = data.get("predicted_utilization", 0)
-            if pred_util > self.decision_engine.threshold:
+            if pred_util > self.decision_engine.trigger_threshold:
                 # To prevent spamming reroutes for the same link
                 if any(r["congested_link"] == f"{u}-{v}" for r in self.active_reroutes):
                     continue
@@ -429,7 +429,7 @@ class DigitalTwin:
                 best_max_util = max_util_in_sim
                 best_path = path
 
-        if best_path and best_max_util < self.decision_engine.threshold:
+        if best_path and best_max_util < self.decision_engine.safety_threshold:
             print(f"[DecisionEngine] Selected path {best_path} with simulated max util {round(best_max_util,1)}%")
             return best_path, best_max_util
             
