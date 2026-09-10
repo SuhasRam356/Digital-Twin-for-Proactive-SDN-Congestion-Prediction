@@ -64,7 +64,7 @@ class DigitalTwin:
         if not os.path.exists(self.csv_file):
             with open(self.csv_file, mode='w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(["timestamp", "link_id", "src_port", "dst_port", "tx_rate_bytes", "utilization_pct"])
+                writer.writerow(["timestamp", "link_id", "src_port", "dst_port", "tx_rate_bytes", "utilization_pct", "predicted_utilization"])
 
     # ------------------------------------------------------------------
     # Public API
@@ -259,7 +259,8 @@ class DigitalTwin:
                     f"{src_dpid}-{dst_dpid}",
                     src_port, dst_port,
                     round(tx_rate, 2),
-                    util
+                    util,
+                    predicted_util
                 ])
 
             if g.has_edge(src_dpid, dst_dpid):

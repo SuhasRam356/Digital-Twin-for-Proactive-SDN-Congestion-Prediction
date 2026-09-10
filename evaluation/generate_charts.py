@@ -86,10 +86,10 @@ def main():
     df_base = None
     df_pro = None
     
-    cols = ['timestamp', 'link_id', 'tx_bytes', 'rx_bytes', 'tx_rate', 'rx_rate', 'utilization', 'predicted_utilization']
+    cols = ['timestamp', 'link_id', 'src_port', 'dst_port', 'tx_rate_bytes', 'utilization', 'predicted_utilization']
     
     if os.path.exists(BASELINE_CSV):
-        df_base = pd.read_csv(BASELINE_CSV, names=cols)
+        df_base = pd.read_csv(BASELINE_CSV, names=cols, header=0)
         print(f"Loaded {BASELINE_CSV} ({len(df_base)} rows)")
         mae, rmse = calculate_metrics(df_base)
         print(f"[EWMA Predictor Baseline] MAE: {mae:.2f}%, RMSE: {rmse:.2f}%")
@@ -98,7 +98,7 @@ def main():
         print(f"WARNING: {BASELINE_CSV} not found. Skip baseline plotting.")
         
     if os.path.exists(PROACTIVE_CSV):
-        df_pro = pd.read_csv(PROACTIVE_CSV, names=cols)
+        df_pro = pd.read_csv(PROACTIVE_CSV, names=cols, header=0)
         print(f"Loaded {PROACTIVE_CSV} ({len(df_pro)} rows)")
         mae, rmse = calculate_metrics(df_pro)
         print(f"[EWMA Predictor Proactive] MAE: {mae:.2f}%, RMSE: {rmse:.2f}%")
