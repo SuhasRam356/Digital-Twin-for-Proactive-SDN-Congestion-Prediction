@@ -44,7 +44,12 @@ class DigitalTwin:
         self.port_map = {}
         
         # Phase 4 components
-        self.decision_engine = DecisionEngine(threshold=40.0)
+        # In baseline mode (no rerouting), we set the threshold to >100% so it never triggers.
+        if os.environ.get("TWIN_BASELINE_MODE") == "1":
+            print("[Twin] BASELINE MODE ENABLED: Proactive rerouting is OFF.")
+            self.decision_engine = DecisionEngine(threshold=101.0)
+        else:
+            self.decision_engine = DecisionEngine(threshold=40.0)
         self.actuator = Actuator(self.controller_url)
         self.active_reroutes = []
 
