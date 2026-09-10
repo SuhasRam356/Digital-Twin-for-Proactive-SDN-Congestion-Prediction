@@ -29,15 +29,16 @@ By combining real-time telemetry from a physical (or emulated) network, an Expon
 6. [Installation and Setup](#installation-and-setup)
 7. [Running the Application](#running-the-application)
 8. [Simulating Network Traffic](#simulating-network-traffic)
-9. [Configuration](#configuration)
-10. [REST API Endpoints](#rest-api-endpoints)
-11. [Project Directory Structure](#project-directory-structure)
-12. [Algorithms and Methodologies](#algorithms-and-methodologies)
-13. [Limitations and Known Issues](#limitations-and-known-issues)
-14. [Future Enhancements Roadmap](#future-enhancements-roadmap)
-15. [Contributing](#contributing)
-16. [License](#license)
-17. [Acknowledgements](#acknowledgements)
+9. [Phase 5 Evaluation Results](#phase-5-evaluation-results)
+10. [Configuration](#configuration)
+11. [REST API Endpoints](#rest-api-endpoints)
+12. [Project Directory Structure](#project-directory-structure)
+13. [Algorithms and Methodologies](#algorithms-and-methodologies)
+14. [Limitations and Known Issues](#limitations-and-known-issues)
+15. [Future Enhancements Roadmap](#future-enhancements-roadmap)
+16. [Contributing](#contributing)
+17. [License](#license)
+18. [Acknowledgements](#acknowledgements)
 
 ---
 
@@ -194,6 +195,28 @@ To test the proactive congestion prediction, you need to generate traffic within
 3. Open your browser and navigate to the Dashboard (`http://localhost:5000`).
 4. Watch the link utilization spike. As it approaches the EWMA prediction threshold (e.g., 40%), you will see the Twin automatically calculate a new route and the Actuator will push the flow rules to Ryu.
 5. The traffic will automatically shift to the newly assigned, less congested path.
+
+---
+
+## Phase 5 Evaluation Results
+
+The system was systematically evaluated by simulating heavy Elephant Flows and capturing the network state telemetry. 
+We compared a reactive-only network (Baseline) with standard ECMP against our proactive Digital Twin network. 
+
+### 1. EWMA Predictor Accuracy
+The predictor attempts to forecast the near-future utilization of every link based on recent telemetry observations. Below is the EWMA predictor tracking a highly variable traffic burst on a core link. 
+![EWMA Prediction Accuracy](evaluation_results/ewma_accuracy_baseline.png)
+*(The prediction algorithm is able to successfully mirror sharp spikes and quickly decay once traffic ceases.)*
+
+### 2. Proactive Congestion Avoidance
+By predicting traffic surges, the Twin is able to simulate and inject rerouting rules *before* a physical bottleneck reaches 100% capacity. 
+![Congestion Over Time](evaluation_results/congestion_over_time.png)
+*(Notice how the Proactive Reroute (Green) intercepts the traffic spike at the 85% threshold, completely preventing the link from reaching the severe congestion sustained by the Baseline (Red).)*
+
+### 3. Peak Utilization Comparison
+The success metric of the system is the reduction of maximum stress on the network's busiest links.
+![Peak Utilization](evaluation_results/peak_utilization.png)
+*(The Digital Twin proactive interventions capped the max link utilization, avoiding packet drops and preserving quality of service).*
 
 ---
 
