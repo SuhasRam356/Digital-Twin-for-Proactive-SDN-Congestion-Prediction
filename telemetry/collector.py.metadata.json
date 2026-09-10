@@ -1,4 +1,0 @@
-{
-  "summary": "Telemetry collector script to poll Ryu REST API and log to SQLite.",
-  "updatedAt": "2026-09-08T02:43:45.034238200Z"
-}
