@@ -7,11 +7,11 @@ RYU_URL = "http://127.0.0.1:8080"
 
 def get_topology():
     try:
-        links = requests.get(f"{RYU_URL}/v1.0/topology/links").json()
-        hosts = requests.get(f"{RYU_URL}/v1.0/topology/hosts").json()
+        links = requests.get("{}/v1.0/topology/links".format(RYU_URL)).json()
+        hosts = requests.get("{}/v1.0/topology/hosts".format(RYU_URL)).json()
         return links, hosts
     except Exception as e:
-        print(f"Error connecting to Ryu: {e}")
+        print("Error connecting to Ryu: {}".format(e))
         return None, None
 
 def build_graph(links, hosts):
@@ -61,7 +61,7 @@ def install_flow(dpid, dst_mac, out_port):
             }
         ]
     }
-    requests.post(f"{RYU_URL}/stats/flowentry/add", json=payload)
+    requests.post("{}/stats/flowentry/add".format(RYU_URL), json=payload)
 
 def main():
     print("Waiting for Ryu topology discovery...")
@@ -87,7 +87,7 @@ def main():
                 
             try:
                 path = nx.shortest_path(g, source=src_mac, target=dst_mac)
-                print(f"Path {src_mac} -> {dst_mac}: {path}")
+                print("Path {} -> {}: {}".format(src_mac, dst_mac, path))
                 
                 # path looks like: [src_mac, switch1, switch2, ..., dst_mac]
                 # We need to install rules on switch1, switch2, etc.
@@ -99,7 +99,7 @@ def main():
                     if out_port:
                         install_flow(current_dpid, dst_mac, out_port)
             except nx.NetworkXNoPath:
-                print(f"WARNING: No path between {src_mac} and {dst_mac}")
+                print("WARNING: No path between {} and {}".format(src_mac, dst_mac))
 
     print("Proactive routing installed successfully. The network is now ready!")
 

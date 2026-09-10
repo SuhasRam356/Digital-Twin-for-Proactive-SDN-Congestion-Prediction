@@ -63,12 +63,12 @@ def create_topology():
     for src in hosts:
         for dst in hosts:
             if src != dst:
-                src.cmd(f"arp -s {dst.IP()} {dst.MAC()}")
+                src.cmd("arp -s {} {}".format(dst.IP(), dst.MAC()))
                 
     info('*** Configuring default PacketIn rules on switches\n')
     for sw in [s1, s2, s3, s4, s5, s6]:
         # Send unmatched traffic to the controller (so rest_topology can discover hosts)
-        sw.cmd(f"ovs-ofctl add-flow {sw.name} priority=1,actions=CONTROLLER")
+        sw.cmd("ovs-ofctl add-flow {} priority=1,actions=CONTROLLER".format(sw.name))
 
     info('*** Sending dummy packets for host discovery\n')
     # This ensures Ryu learns where the hosts are immediately
