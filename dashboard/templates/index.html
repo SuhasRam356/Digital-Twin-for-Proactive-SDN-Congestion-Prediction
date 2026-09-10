@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SDN Digital Twin — Live Dashboard</title>
+  <meta name="description" content="Real-time visualisation of the SDN Digital Twin network topology and link utilisation." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0b0b1a;
+      --surface:  rgba(18, 18, 42, .82);
+      --border:   rgba(100, 120, 255, .12);
+      --accent:   #00d4ff;
+      --accent2:  #7b68ee;
+      --green:    #00ff88;
+      --yellow:   #ffd700;
+      --red:      #ff4757;
+      --text:     #d8d8f0;
+      --text-dim: #7a7a9e;
+      --radius:   14px;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(ellipse at 20% 50%, rgba(0,212,255,.07) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(123,104,238,.07) 0%, transparent 50%);
+      pointer-events: none; z-index: 0;
+    }
+
+    header {
+      position: relative; z-index: 1;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 28px;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      background: var(--surface);
+    }
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo-icon {
+      width: 34px; height: 34px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 8px; display: grid; place-items: center; font-size: 18px;
+    }
+    .logo h1 { font-size: 1.15rem; font-weight: 600; }
+    .logo h1 span { color: var(--accent); }
+
+    .sync-badge {
+      display: flex; align-items: center; gap: 8px;
+      font-size: .82rem; font-weight: 500;
+      padding: 6px 14px; border-radius: 20px;
+      background: rgba(0,255,136,.08);
+      border: 1px solid rgba(0,255,136,.25);
+      color: var(--green); transition: all .3s;
+    }
+    .sync-badge.offline {
+      background: rgba(255,71,87,.08);
+      border-color: rgba(255,71,87,.25);
+      color: var(--red);
+    }
+    .sync-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); animation: pulse 1.8s infinite;
+    }
+    .sync-badge.offline .sync-dot { background: var(--red); animation: none; }
+    @keyframes pulse {
+      0%,100% { opacity:1; transform:scale(1); }
+      50%     { opacity:.4; transform:scale(.7); }
+    }
+
+    .stats-row {
+      position: relative; z-index: 1;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px; padding: 18px 28px;
+    }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px 20px;
+      backdrop-filter: blur(10px); transition: transform .2s, border-color .3s;
+    }
+    .stat-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+    .stat-card .label { font-size: .72rem; text-transform: uppercase; letter-spacing: .8px; color: var(--text-dim); margin-bottom: 6px; }
+    .stat-card .value { font-size: 1.7rem; font-weight: 700; }
+    .stat-card .value.accent  { color: var(--accent); }
+    .stat-card .value.accent2 { color: var(--accent2); }
+    .stat-card .value.green   { color: var(--green); }
+    .stat-card .value.yellow  { color: var(--yellow); }
+
+    .main {
+      position: relative; z-index: 1;
+      display: grid; grid-template-columns: 1fr 380px;
+      gap: 14px; padding: 0 28px 22px;
+    }
+    @media (max-width: 960px) { .main { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); backdrop-filter: blur(10px);
+      display: flex; flex-direction: column;
+    }
+    .card-header {
+      padding: 14px 20px; border-bottom: 1px solid var(--border);
+      font-weight: 600; font-size: .88rem;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card-header .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+    #graph-canvas { width: 100%; height: 460px; display: block; border-radius: 0 0 14px 14px; }
+
+    .right-panel { display: flex; flex-direction: column; gap: 14px; }
+    #chart-container { padding: 14px 16px; height: 210px; }
+
+    .table-wrap { flex: 1; overflow-y: auto; padding: 0 0 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+    thead th {
+      position: sticky; top: 0; padding: 10px 14px; text-align: left;
+      font-weight: 600; text-transform: uppercase; letter-spacing: .6px;
+      font-size: .68rem; color: var(--text-dim); background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    tbody td { padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,.03); white-space: nowrap; }
+    tbody tr:hover { background: rgba(0,212,255,.04); }
+    .util-bar { width: 60px; height: 6px; background: rgba(255,255,255,.06); border-radius: 3px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
+    .util-bar-fill { height: 100%; border-radius: 3px; transition: width .4s, background .4s; }
+
+    .footer { position: relative; z-index: 1; text-align: center; padding: 12px; font-size: .7rem; color: var(--text-dim); border-top: 1px solid var(--border); }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 4px; }
+  </style>
+</head>
+
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-icon">🌐</div>
+    <h1>SDN <span>Digital Twin</span></h1>
+  </div>
+  <div class="sync-badge" id="syncBadge">
+    <div class="sync-dot"></div>
+    <span id="syncText">Connecting…</span>
+  </div>
+</header>
+
+<div class="stats-row">
+  <div class="stat-card"><div class="label">Switches</div><div class="value accent" id="statSwitches">—</div></div>
+  <div class="stat-card"><div class="label">Hosts</div><div class="value accent2" id="statHosts">—</div></div>
+  <div class="stat-card"><div class="label">Links</div><div class="value green" id="statLinks">—</div></div>
+  <div class="stat-card"><div class="label">Avg Utilization</div><div class="value yellow" id="statUtil">—</div></div>
+</div>
+
+<div class="main">
+  <div class="card">
+    <div class="card-header">
+      <div class="dot" style="background:var(--accent)"></div>
+      Live Topology
+    </div>
+    <canvas id="graph-canvas"></canvas>
+  </div>
+
+  <div class="right-panel">
+    <div class="card">
+      <div class="card-header">
+        <div class="dot" style="background:var(--green)"></div>
+        Utilization Over Time
+      </div>
+      <div id="chart-container"><canvas id="utilChart"></canvas></div>
+    </div>
+    <div class="card" style="flex:1;">
+      <div class="card-header">
+        <div class="dot" style="background:var(--yellow)"></div>
+        Link Statistics
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Link</th><th>Utilization</th><th>Prediction (30s)</th><th>TX Rate</th></tr></thead>
+          <tbody id="linkTableBody"></tbody>
+        </table>
+      </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top: 15px;">
+      <div class="card-header">
+        <div class="dot" style="background:#00ffff"></div>
+        System Logs (Active Reroutes)
+      </div>
+      <div class="table-wrap" style="max-height: 120px;">
+        <table style="font-size: 0.85em;">
+          <thead><tr><th>Time</th><th>Target</th><th>Avoided</th><th>New Path</th></tr></thead>
+          <tbody id="reroutesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer" id="footer">Digital Twin Dashboard — Phase 4</div>
+
+<script>
+// ═══════════════════  CUSTOM CANVAS GRAPH  ═══════════════════
+const canvas = document.getElementById('graph-canvas');
+const gCtx   = canvas.getContext('2d');
+
+// Fixed positions for our known topology (normalised 0–1)
+const SWITCH_POS = {
+  1: { x: 0.20, y: 0.30 },  // s1
+  2: { x: 0.20, y: 0.70 },  // s2
+  3: { x: 0.45, y: 0.30 },  // s3
+  4: { x: 0.45, y: 0.70 },  // s4
+  5: { x: 0.70, y: 0.30 },  // s5
+  6: { x: 0.70, y: 0.70 },  // s6
+};
+const HOST_POS = {
+  '10.0.0.1': { x: 0.06, y: 0.30 },
+  '10.0.0.2': { x: 0.06, y: 0.70 },
+  '10.0.0.3': { x: 0.94, y: 0.30 },
+  '10.0.0.4': { x: 0.94, y: 0.70 },
+};
+
+function resizeCanvas() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width  = rect.width;
+  canvas.height = 460;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+function utilColor(pct) {
+  if (pct < 30)  return '#00ff88';
+  if (pct < 70)  return '#ffd700';
+  return '#ff4757';
+}
+
+function getPos(node, W, H) {
+  if (node.node_type === 'switch') {
+    const p = SWITCH_POS[node.dpid_int] || SWITCH_POS[parseInt(node.label.replace('s',''))] || { x:0.5, y:0.5 };
+    return { x: p.x * W, y: p.y * H };
+  }
+  const p = HOST_POS[node.ipv4] || HOST_POS[node.label] || { x: 0.5, y: 0.5 };
+  return { x: p.x * W, y: p.y * H };
+}
+
+function drawGraph(state) {
+  const W = canvas.width, H = canvas.height;
+  const ctx = gCtx;
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = 'rgba(5,5,18,0.6)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle grid
+  ctx.strokeStyle = 'rgba(100,120,255,0.04)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  if (!state || !state.nodes.length) {
+    ctx.fillStyle = '#7a7a9e';
+    ctx.font = '14px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Waiting for network data…', W/2, H/2);
+    return;
+  }
+
+  // Build position map
+  const posMap = {};
+  state.nodes.forEach(n => { posMap[n.id] = getPos(n, W, H); });
+
+  // Draw edges
+  state.edges.forEach(e => {
+    const p1 = posMap[e.source], p2 = posMap[e.target];
+    if (!p1 || !p2) return;
+
+    const isSwitch = e.link_type === 'switch';
+    const col = isSwitch ? utilColor(e.utilization) : 'rgba(123,104,238,0.3)';
+    const lw  = isSwitch ? Math.max(2, (e.utilization / 100) * 8 + 2) : 1.5;
+
+    // Glow
+    if (isSwitch && e.utilization > 0) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = lw + 6;
+      ctx.globalAlpha = 0.15;
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // Line
+    ctx.strokeStyle = col;
+    ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+
+    // Utilization label on edge
+    if (isSwitch) {
+      const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      const label = e.utilization.toFixed(1) + '%';
+      ctx.font = '10px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // Background pill
+      const tw = ctx.measureText(label).width + 8;
+      ctx.fillStyle = 'rgba(11,11,26,0.85)';
+      ctx.beginPath();
+      ctx.roundRect(mx - tw/2, my - 8, tw, 16, 4);
+      ctx.fill();
+      ctx.fillStyle = col;
+      ctx.fillText(label, mx, my);
+    }
+  });
+
+  // Draw nodes
+  state.nodes.forEach(n => {
+    const p = posMap[n.id];
+    if (!p) return;
+
+    if (n.node_type === 'switch') {
+      const w = 56, h = 32, r = 8;
+      // Glow shadow
+      ctx.shadowColor = 'rgba(0,212,255,0.4)';
+      ctx.shadowBlur = 18;
+      // Rounded rect
+      ctx.fillStyle = '#141438';
+      ctx.strokeStyle = '#00d4ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(p.x - w/2, p.y - h/2, w, h, r);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Label
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 13px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(n.label.toUpperCase(), p.x, p.y);
+    } else {
+      // Host node — circle
+      ctx.shadowColor = 'rgba(123,104,238,0.4)';
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = '#1e1040';
+      ctx.strokeStyle = '#b07aff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Label
+      ctx.fillStyle = '#d0c0ff';
+      ctx.font = '10px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(n.label, p.x, p.y);
+    }
+  });
+}
+
+// ═══════════════════  Chart.js  ═══════════════════
+const chartCtx = document.getElementById('utilChart').getContext('2d');
+const gradAvg  = chartCtx.createLinearGradient(0,0,0,180);
+gradAvg.addColorStop(0,'rgba(0,212,255,.35)'); gradAvg.addColorStop(1,'rgba(0,212,255,.02)');
+const gradPeak = chartCtx.createLinearGradient(0,0,0,180);
+gradPeak.addColorStop(0,'rgba(255,71,87,.30)'); gradPeak.addColorStop(1,'rgba(255,71,87,.02)');
+
+const chart = new Chart(chartCtx, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label:'Avg %', data:[], borderColor:'#00d4ff', backgroundColor:gradAvg, borderWidth:2, fill:true, tension:.35, pointRadius:0 },
+      { label:'Peak %', data:[], borderColor:'#ff4757', backgroundColor:gradPeak, borderWidth:1.5, fill:true, tension:.35, pointRadius:0, borderDash:[4,3] }
+    ]
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false, animation:{duration:300},
+    plugins:{ legend:{ labels:{ color:'#7a7a9e', font:{size:10,family:'Inter'}, boxWidth:14 } } },
+    scales:{
+      x:{ ticks:{color:'#4a4a6e',maxRotation:0,maxTicksLimit:8,font:{size:9}}, grid:{color:'rgba(255,255,255,.03)'} },
+      y:{ min:0,max:100, ticks:{color:'#4a4a6e',callback:v=>v+'%',font:{size:9}}, grid:{color:'rgba(255,255,255,.04)'} }
+    }
+  }
+});
+
+// ═══════════════════  helpers  ═══════════════════
+function formatRate(b) {
+  if (b < 1024)       return b.toFixed(0) + ' B/s';
+  if (b < 1048576)    return (b/1024).toFixed(1) + ' KB/s';
+  return (b/1048576).toFixed(2) + ' MB/s';
+}
+
+// ═══════════════════  polling  ═══════════════════
+async function poll() {
+  try {
+    const res = await fetch('/api/state');
+    const state = await res.json();
+    updateUI(state);
+  } catch(e) {
+    document.getElementById('syncBadge').className = 'sync-badge offline';
+    document.getElementById('syncText').textContent = 'Dashboard offline';
+  }
+}
+
+function updateUI(state) {
+  // Sync badge
+  const badge = document.getElementById('syncBadge');
+  if (state.is_connected) {
+    badge.className = 'sync-badge';
+    document.getElementById('syncText').textContent = 'Synced · #' + state.sync_count;
+  } else {
+    badge.className = 'sync-badge offline';
+    document.getElementById('syncText').textContent = 'Controller offline';
+  }
+
+  // Stat cards
+  document.getElementById('statSwitches').textContent = state.num_switches;
+  document.getElementById('statHosts').textContent    = state.num_hosts;
+  document.getElementById('statLinks').textContent    = state.num_links;
+  const sEdges = state.edges.filter(e => e.link_type === 'switch');
+  const avg = sEdges.length ? (sEdges.reduce((s,e) => s + e.utilization, 0) / sEdges.length).toFixed(1) : '0.0';
+  document.getElementById('statUtil').textContent = avg + '%';
+
+  // Canvas graph
+  resizeCanvas();
+  drawGraph(state);
+
+  // Chart
+  const h = state.utilization_history || [];
+  chart.data.labels = h.map(x => x.time);
+  chart.data.datasets[0].data = h.map(x => x.avg);
+  chart.data.datasets[1].data = h.map(x => x.peak);
+  chart.update('none');
+
+  // Table
+  const tbody = document.getElementById('linkTableBody');
+  tbody.innerHTML = sEdges.sort((a,b) => b.utilization - a.utilization).map(e => {
+    const src = state.nodes.find(n => n.id === e.source)?.label || '?';
+    const dst = state.nodes.find(n => n.id === e.target)?.label || '?';
+    const c = utilColor(e.utilization);
+    const predC = utilColor(e.predicted_utilization);
+    return `<tr>
+      <td>${src} → ${dst}</td>
+      <td><div class="util-bar"><div class="util-bar-fill" style="width:${e.utilization}%;background:${c}"></div></div><span style="color:${c}">${e.utilization.toFixed(1)}%</span></td>
+      <td><span style="color:${predC}">${(e.predicted_utilization || 0).toFixed(1)}%</span></td>
+      <td>${formatRate(e.tx_rate)}</td>
+    </tr>`;
+  }).join('');
+
+  // Active Reroutes
+  const rtBody = document.getElementById('reroutesBody');
+  const reroutes = state.active_reroutes || [];
+  if (reroutes.length === 0) {
+    rtBody.innerHTML = '<tr><td colspan="4" style="text-align:center; opacity:0.5; padding: 10px;">No reroutes active</td></tr>';
+  } else {
+    rtBody.innerHTML = reroutes.map(r => `<tr>
+      <td style="color:#8b8ba7">${r.time}</td>
+      <td style="color:#00ffff">${r.dst_mac}</td>
+      <td style="color:#ff4757">${r.congested_link}</td>
+      <td style="color:#00ff88">${r.new_path}</td>
+    </tr>`).join('');
+  }
+
+  // Footer
+  document.getElementById('footer').textContent =
+    'Last sync: ' + (state.last_sync||'—') + '  ·  Sync #' + state.sync_count +
+    '  ·  ' + state.num_switches + ' switches, ' + state.num_hosts + ' hosts, ' + state.num_links + ' links';
+}
+
+setInterval(poll, 2000);
+poll();
+</script>
+</body>
+</html>
