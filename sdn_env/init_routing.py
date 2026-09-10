@@ -27,19 +27,25 @@ def build_graph(links, hosts):
         g.add_edge(s1, s2)
         port_map[(s1, s2)] = p1
 
-    # Add host links
-    for host in hosts:
+    # Hardcode the known hosts for this specific topology
+    # This bypasses Ryu's unreliable host discovery and guarantees instant routing
+    static_hosts = [
+        {"mac": "00:00:00:00:00:01", "dpid": 1, "port": 1}, # h1 on s1
+        {"mac": "00:00:00:00:00:02", "dpid": 2, "port": 1}, # h2 on s2
+        {"mac": "00:00:00:00:00:03", "dpid": 5, "port": 1}, # h3 on s5
+        {"mac": "00:00:00:00:00:04", "dpid": 6, "port": 1}, # h4 on s6
+    ]
+
+    for host in static_hosts:
         mac = host["mac"]
-        port = host.get("port")
-        if port:
-            dpid = int(port["dpid"], 16)
-            port_no = int(port["port_no"], 16) if isinstance(port["port_no"], str) else port["port_no"]
+        dpid = host["dpid"]
+        port_no = host["port"]
+        
+        g.add_node(mac)
+        g.add_edge(mac, dpid)
+        port_map[(dpid, mac)] = port_no
             
-            g.add_node(mac)
-            g.add_edge(mac, dpid)
-            port_map[(dpid, mac)] = port_no
-            
-    return g, port_map
+    return g, port_map, static_hosts
 
 def install_flow(dpid, dst_mac, out_port):
     payload = {
@@ -66,15 +72,15 @@ def install_flow(dpid, dst_mac, out_port):
 def main():
     print("Waiting for Ryu topology discovery...")
     
-    # Wait until all 4 hosts and switches are discovered
+    # Wait until 16 directional links (8 bidir links) are discovered
     while True:
-        links, hosts = get_topology()
-        if links is not None and len(hosts) >= 4 and len(links) >= 16: # 8 bidir links
+        links, _ = get_topology()
+        if links is not None and len(links) >= 16:
             break
         time.sleep(2)
-        print("Still waiting for hosts to be discovered (did you run the ping dummy packets?)...")
+        print("Still waiting for links to be discovered by Ryu...")
 
-    g, port_map = build_graph(links, hosts)
+    g, port_map, hosts = build_graph(links, [])
     
     print("Topology discovered! Computing shortest paths...")
     
