@@ -205,17 +205,17 @@ We compared a reactive-only network (Baseline) with standard ECMP against our pr
 
 ### 1. EWMA Predictor Accuracy
 The predictor attempts to forecast the near-future utilization of every link based on recent telemetry observations. Below is the EWMA predictor tracking a highly variable traffic burst on a core link. 
-![EWMA Prediction Accuracy](evaluation_results/ewma_accuracy_baseline.png)
+![EWMA Prediction Accuracy](evaluation_results/ewma_accuracy_baseline.png?v=2)
 *(The prediction algorithm is able to successfully mirror sharp spikes and quickly decay once traffic ceases.)*
 
 ### 2. Proactive Congestion Avoidance
 By predicting traffic surges, the Twin is able to simulate and inject rerouting rules *before* a physical bottleneck reaches 100% capacity. 
-![Congestion Over Time](evaluation_results/congestion_over_time.png)
+![Congestion Over Time](evaluation_results/congestion_over_time.png?v=2)
 *(Notice how the Proactive Reroute (Green) intercepts the traffic spike at the 85% threshold, completely preventing the link from reaching the severe congestion sustained by the Baseline (Red).)*
 
 ### 3. Peak Utilization Comparison
 The success metric of the system is the reduction of maximum stress on the network's busiest links.
-![Peak Utilization](evaluation_results/peak_utilization.png)
+![Peak Utilization](evaluation_results/peak_utilization.png?v=2)
 *(The Digital Twin proactive interventions capped the max link utilization, avoiding packet drops and preserving quality of service).*
 
 ---
