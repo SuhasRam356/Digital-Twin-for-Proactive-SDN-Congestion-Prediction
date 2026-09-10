@@ -60,7 +60,8 @@ class DigitalTwin:
         self.predictor = EWMAPredictor(alpha=0.3)
         
         # Initialize CSV logging
-        self.csv_file = "dataset.csv"
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.csv_file = os.path.join(project_root, "dataset.csv")
         if not os.path.exists(self.csv_file):
             with open(self.csv_file, mode='w', newline='') as f:
                 writer = csv.writer(f)
