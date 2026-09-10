@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-from mininet.net import Mininet
-from mininet.node import RemoteController, OVSKernelSwitch
-from mininet.cli import CLI
-from mininet.log import setLogLevel, info
-from mininet.link import TCLink
+from mininet.net import Mininet  # pyrefly: ignore [missing-import]
+from mininet.node import RemoteController, OVSKernelSwitch  # pyrefly: ignore [missing-import]
+from mininet.cli import CLI  # pyrefly: ignore [missing-import]
+from mininet.log import setLogLevel, info  # pyrefly: ignore [missing-import]
+from mininet.link import TCLink  # pyrefly: ignore [missing-import]
 
 def create_topology():
     net = Mininet(controller=RemoteController, switch=OVSKernelSwitch, link=TCLink)
