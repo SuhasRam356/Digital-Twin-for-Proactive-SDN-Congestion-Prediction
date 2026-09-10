@@ -31,11 +31,6 @@ class Actuator:
                 
                 # Rule: Match on dst_mac, output to out_port
                 self._add_flow(current_dpid, dst_mac, out_port, priority=100)
-                
-                # Reverse rule for symmetric routing (e.g. TCP ACKs)
-                rev_out_port = port_map.get((next_dpid, current_dpid))
-                if rev_out_port:
-                    self._add_flow(next_dpid, src_mac, rev_out_port, priority=100)
 
         print("[Actuator] Reroute successfully installed.")
 
