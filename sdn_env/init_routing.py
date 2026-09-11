@@ -30,10 +30,10 @@ def build_graph(links, hosts):
     # Hardcode the known hosts for this specific topology
     # This bypasses Ryu's unreliable host discovery and guarantees instant routing
     static_hosts = [
-        {"mac": "00:00:00:00:00:01", "dpid": 1, "port": 1}, # h1 on s1
-        {"mac": "00:00:00:00:00:02", "dpid": 2, "port": 1}, # h2 on s2
-        {"mac": "00:00:00:00:00:03", "dpid": 5, "port": 1}, # h3 on s5
-        {"mac": "00:00:00:00:00:04", "dpid": 6, "port": 1}, # h4 on s6
+        {"mac": "00:00:00:00:00:01", "dpid": 1, "port": 1, "vlan": 10}, # h1 on s1 (Tenant A)
+        {"mac": "00:00:00:00:00:02", "dpid": 2, "port": 1, "vlan": 20}, # h2 on s2 (Tenant B)
+        {"mac": "00:00:00:00:00:03", "dpid": 5, "port": 1, "vlan": 20}, # h3 on s5 (Tenant B)
+        {"mac": "00:00:00:00:00:04", "dpid": 6, "port": 1, "vlan": 10}, # h4 on s6 (Tenant A)
     ]
 
     for host in static_hosts:
@@ -47,7 +47,34 @@ def build_graph(links, hosts):
             
     return g, port_map, static_hosts
 
-def install_flow(dpid, dst_mac, out_port):
+def install_flow(dpid, src_mac, dst_mac, out_port, vlan_id, role="core"):
+    match = {
+        "dl_src": src_mac,
+        "dl_dst": dst_mac
+    }
+    actions = []
+
+    if role == "ingress":
+        # Untagged packet entering, push VLAN
+        actions = [
+            {"type": "PUSH_VLAN", "ethertype": 33024},
+            {"type": "SET_FIELD", "field": "vlan_vid", "value": 4096 + vlan_id},
+            {"type": "OUTPUT", "port": out_port}
+        ]
+    elif role == "egress":
+        # Tagged packet exiting to host, pop VLAN
+        match["dl_vlan"] = vlan_id
+        actions = [
+            {"type": "POP_VLAN"},
+            {"type": "OUTPUT", "port": out_port}
+        ]
+    else:
+        # Core switch forwarding tagged packet
+        match["dl_vlan"] = vlan_id
+        actions = [
+            {"type": "OUTPUT", "port": out_port}
+        ]
+
     payload = {
         "dpid": dpid,
         "cookie": 1,
@@ -57,15 +84,8 @@ def install_flow(dpid, dst_mac, out_port):
         "hard_timeout": 0,
         "priority": 10,  # Base routing priority
         "flags": 1,
-        "match": {
-            "dl_dst": dst_mac
-        },
-        "actions": [
-            {
-                "type": "OUTPUT",
-                "port": out_port
-            }
-        ]
+        "match": match,
+        "actions": actions
     }
     requests.post("{}/stats/flowentry/add".format(RYU_URL), json=payload)
 
@@ -84,26 +104,44 @@ def main():
     
     print("Topology discovered! Computing shortest paths...")
     
-    macs = [h["mac"] for h in hosts]
-    
-    for src_mac in macs:
-        for dst_mac in macs:
-            if src_mac == dst_mac:
+    for src_host in hosts:
+        for dst_host in hosts:
+            if src_host["mac"] == dst_host["mac"]:
                 continue
                 
+            # IEEE 802.1Q: Tenant Isolation
+            if src_host["vlan"] != dst_host["vlan"]:
+                continue
+                
+            src_mac = src_host["mac"]
+            dst_mac = dst_host["mac"]
+            vlan_id = src_host["vlan"]
+            
             try:
                 path = nx.shortest_path(g, source=src_mac, target=dst_mac)
-                print("Path {} -> {}: {}".format(src_mac, dst_mac, path))
+                print("Path {} -> {} (VLAN {}): {}".format(src_mac, dst_mac, vlan_id, path))
                 
                 # path looks like: [src_mac, switch1, switch2, ..., dst_mac]
                 # We need to install rules on switch1, switch2, etc.
                 for i in range(1, len(path) - 1):
                     current_dpid = path[i]
                     next_hop = path[i+1]
-                    
                     out_port = port_map.get((current_dpid, next_hop))
-                    if out_port:
-                        install_flow(current_dpid, dst_mac, out_port)
+                    
+                    if not out_port:
+                        continue
+                        
+                    role = "core"
+                    if i == 1:
+                        role = "ingress"
+                    elif i == len(path) - 2:
+                        role = "egress"
+                        
+                    # If ingress and egress are on the same switch (not happening here, but good practice)
+                    if i == 1 and i == len(path) - 2:
+                        role = "core" # or a specialized intra-switch role, but in this topo it's distinct
+                        
+                    install_flow(current_dpid, src_mac, dst_mac, out_port, vlan_id, role)
             except nx.NetworkXNoPath:
                 print("WARNING: No path between {} and {}".format(src_mac, dst_mac))
 

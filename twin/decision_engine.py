@@ -1,9 +1,10 @@
 import networkx as nx
 
 class DecisionEngine:
-    def __init__(self, trigger_threshold=40.0, safety_threshold=85.0):
+    def __init__(self, trigger_threshold=40.0, safety_threshold=85.0, default_capacity_mbps=100):
         self.trigger_threshold = trigger_threshold    # when to start looking for a reroute
         self.safety_threshold = safety_threshold      # max util to accept a candidate as "safe enough"
+        self.default_capacity_mbps = default_capacity_mbps
 
     def decide_reroute(self, graph, congested_link, flow_data, port_map):
         """
@@ -56,7 +57,7 @@ class DecisionEngine:
                 n1, n2 = path[i], path[i+1]
                 edge = sim_graph[n1][n2]
                 
-                capacity_mbps = edge.get('capacity_mbps', 100)
+                capacity_mbps = edge.get('capacity_mbps', self.default_capacity_mbps)
                 current_util = edge.get('predicted_utilization', edge.get('utilization', 0))
                 
                 # Add flow volume

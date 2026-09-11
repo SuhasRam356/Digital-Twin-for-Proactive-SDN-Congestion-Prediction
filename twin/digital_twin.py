@@ -12,10 +12,18 @@ import requests
 import networkx as nx
 import csv
 import os
+import zmq
+import json
+from prometheus_client import start_http_server, Gauge
 from datetime import datetime
 from twin.predictor import EWMAPredictor
 from twin.decision_engine import DecisionEngine
 from twin.actuator import Actuator
+
+# Prometheus Gauges
+PROMETHEUS_PORT = 8000
+UTILIZATION_GAUGE = Gauge('sdn_link_utilization_percent', 'Current Link Utilization', ['src_dpid', 'dst_dpid'])
+PREDICTED_UTIL_GAUGE = Gauge('sdn_link_predicted_utilization_percent', 'Predicted Link Utilization', ['src_dpid', 'dst_dpid'])
 
 
 class DigitalTwin:
@@ -37,11 +45,26 @@ class DigitalTwin:
         self.sync_count = 0
         self.link_capacity_mbps = link_capacity_mbps
         self.is_connected = False
+        self.session = requests.Session()
+        
+        # Start Prometheus Metrics Server
+        try:
+            start_http_server(PROMETHEUS_PORT)
+            print(f"[Twin] Prometheus metrics server started on port {PROMETHEUS_PORT}")
+        except Exception as e:
+            print(f"[Twin] Prometheus server failed to start: {e}")
+
+        # ZeroMQ setup
+        self.zmq_context = zmq.Context()
+        self.zmq_socket = self.zmq_context.socket(zmq.SUB)
+        self.zmq_socket.connect("tcp://127.0.0.1:5555")
+        self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, "telemetry ")
 
         # For computing byte-rate between consecutive polls
         self._prev_stats = {}
         self._prev_time = None
         self.port_map = {}
+        self._flow_stats_cache = {}
         
         # Phase 4 components
         # In baseline mode (no rerouting), we set trigger_threshold to >100% so it never fires.
@@ -71,37 +94,40 @@ class DigitalTwin:
     # Public API
     # ------------------------------------------------------------------
 
-    def sync(self):
-        """Pull fresh state from the controller and rebuild the graph."""
+    def start_streaming(self):
+        """Perform initial topology sync via REST, then start ZMQ listening."""
         try:
-            switches = self._fetch("/v1.0/topology/switches") or []
-            links = self._fetch("/v1.0/topology/links") or []
-            hosts = self._fetch("/v1.0/topology/hosts") or []
+            self.switches = self._fetch("/v1.0/topology/switches") or []
+            self.links = self._fetch("/v1.0/topology/links") or []
+            self.hosts = self._fetch("/v1.0/topology/hosts") or []
+            self.is_connected = True
             
-            # Fetch port stats per switch instead of using 'ALL' to avoid Ryu ValueError
-            port_stats = {}
-            for sw in switches:
-                dpid = sw.get("dpid")
-                if dpid:
-                    # int(dpid, 16) is needed because dpid is hex string e.g., "0000000000000001"
-                    dpid_int = int(dpid, 16)
-                    stats = self._fetch(f"/stats/port/{dpid_int}")
-                    if stats and str(dpid_int) in stats:
-                        port_stats[str(dpid_int)] = stats[str(dpid_int)]
-
-            with self.lock:
-                self._rebuild(switches,
-                              links,
-                              hosts,
-                              port_stats)
-                self.last_sync = datetime.now()
-                self.sync_count += 1
-                self.is_connected = True
-
-        except requests.exceptions.ConnectionError:
+            # Start background ZMQ loop
+            t = threading.Thread(target=self._zmq_loop, daemon=True)
+            t.start()
+        except Exception as e:
+            print(f"[Twin] Initial sync error: {e}")
             self.is_connected = False
-        except Exception as exc:
-            print(f"[Twin] sync error: {exc}")
+
+    def _zmq_loop(self):
+        print("[Twin] Listening for ZMQ telemetry streams...")
+        self.latest_port_stats = {}
+        while True:
+            try:
+                msg = self.zmq_socket.recv_string()
+                topic, data_str = msg.split(" ", 1)
+                data = json.loads(data_str)
+                
+                if data["type"] == "port_stats":
+                    dpid = str(data["dpid"])
+                    self.latest_port_stats[dpid] = data["stats"]
+                    
+                    with self.lock:
+                        self._rebuild(self.switches, self.links, self.hosts, self.latest_port_stats)
+                        self.last_sync = datetime.now()
+                        self.sync_count += 1
+            except Exception as e:
+                print(f"[Twin] ZMQ loop error: {e}")
 
     def get_state(self):
         """Return the full twin state as a JSON-serialisable dict."""
@@ -152,7 +178,7 @@ class DigitalTwin:
 
     def _fetch(self, path):
         """GET JSON from the Ryu REST API."""
-        r = requests.get(f"{self.controller_url}{path}", timeout=3)
+        r = self.session.get(f"{self.controller_url}{path}", timeout=3)
         return r.json() if r.status_code == 200 else None
 
     @staticmethod
@@ -252,6 +278,10 @@ class DigitalTwin:
             # Predict future utilization using EWMA
             predicted_util = self.predictor.predict(lk, util)
 
+            # Update Prometheus metrics
+            UTILIZATION_GAUGE.labels(src_dpid, dst_dpid).set(util)
+            PREDICTED_UTIL_GAUGE.labels(src_dpid, dst_dpid).set(predicted_util)
+
             # Log to CSV
             with open(self.csv_file, mode='a', newline='') as f:
                 writer = csv.writer(f)
@@ -322,6 +352,7 @@ class DigitalTwin:
         Scans all links for predicted congestion (>85%).
         If found, tracks the heavy flow and triggers the decision engine.
         """
+        self._flow_stats_cache.clear()
         for u, v, data in self.graph.edges(data=True):
             if data.get("link_type") != "switch":
                 continue
@@ -349,38 +380,54 @@ class DigitalTwin:
                 # 2. Trigger Decision Engine
                 # Instead of end-to-end, we compute a path from the current switch (u) 
                 # to the destination host, bypassing the congested link (u,v).
-                print(f"[Twin] Identified heavy flow to {dst_mac}. Simulating alternatives...")
                 
                 # Mock a flow_data dict with just enough info for the decision engine
+                # Get real source MAC if available, else default to "any"
+                src_mac = heavy_flow["match"].get("dl_src", "any")
+                dst_mac = heavy_flow["match"].get("dl_dst", "any")
+                vlan_id = heavy_flow["match"].get("dl_vlan", None)
+                flow_id = f"{src_mac}_{dst_mac}_{vlan_id}_{heavy_flow['match'].get('in_port', 'any')}"
+
+                # Flapping protection: Have we already rerouted this specific flow recently?
+                if any(r["flow_id"] == flow_id for r in self.active_reroutes):
+                    continue
+                
+                print(f"[Twin] WARNING: Link {u}-{v} predicted to reach {pred_util:.1f}%. Triggering reroute for {src_mac}->{dst_mac} (VLAN {vlan_id})...")
+                
                 flow_data = {
-                    "src_mac": "switch_source", # Will start path from u
+                    "src_mac": src_mac,
                     "dst_mac": dst_mac,
-                    "tx_rate_bytes": data["tx_rate"]
+                    "tx_rate_bytes": data.get("tx_rate", 0)
                 }
                 
-                # Slightly modify decision engine inputs to start from switch `u`
+                # 2. Trigger Decision Engine
                 best_path, sim_util = self._run_decision_engine(u, dst_mac, (u, v), flow_data)
                 
                 # 3. Actuate!
                 if best_path:
-                    self.actuator.push_reroute("any", dst_mac, best_path, self.port_map)
+                    self.actuator.push_reroute(src_mac, dst_mac, best_path, self.port_map, vlan_id=vlan_id)
+                    
                     self.active_reroutes.insert(0, {
-                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "flow_id": flow_id,
                         "congested_link": f"{u}-{v}",
-                        "dst_mac": dst_mac,
-                        "new_path": " -> ".join([str(self._dpid_to_int(p)) for p in best_path]),
-                        "sim_util": sim_util
+                        "new_path": " -> ".join([str(p) for p in best_path]),
+                        "timestamp": time.time(),
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "dst_mac": dst_mac
                     })
-                    # Keep max 5 logs
-                    self.active_reroutes = self.active_reroutes[:5]
+                    # Keep max 10 logs (preventing flapping across multiple flows)
+                    self.active_reroutes = self.active_reroutes[:10]
 
     def _find_heavy_flow(self, dpid_int, out_port):
         """Polls /stats/flow/{dpid} to find the flow with highest bytes exiting out_port."""
-        flow_stats = self._fetch(f"/stats/flow/{dpid_int}")
-        if not flow_stats or str(dpid_int) not in flow_stats:
-            return None
-            
-        flows = flow_stats[str(dpid_int)]
+        if dpid_int not in self._flow_stats_cache:
+            flow_stats = self._fetch(f"/stats/flow/{dpid_int}")
+            if flow_stats and str(dpid_int) in flow_stats:
+                self._flow_stats_cache[dpid_int] = flow_stats[str(dpid_int)]
+            else:
+                self._flow_stats_cache[dpid_int] = []
+
+        flows = self._flow_stats_cache[dpid_int]
         heavy_flow = None
         max_bytes = -1
         

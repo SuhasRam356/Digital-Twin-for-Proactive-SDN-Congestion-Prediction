@@ -55,9 +55,13 @@ The Digital Twin mirrors the state of the network switches, links, and hosts. By
 
 - **Real-Time Network Mirroring**: Dynamically maps and synchronizes Mininet/OpenFlow network topologies into a NetworkX graph.
 - **Proactive Congestion Prediction**: Utilizes an EWMA-based forecasting model to predict near-future traffic spikes on a per-link basis.
-- **Intelligent Decision Engine**: Simulates "what-if" scenarios for heavy elephant flows, calculating k-shortest paths to bypass predicted bottlenecks without causing secondary congestion.
-- **Automated Actuation**: Communicates directly with the Ryu REST API to inject proactive OpenFlow routing rules (FlowMods) into edge and core switches.
-- **Continuous Telemetry Logging**: Dumps historical throughput, tx/rx rates, and utilization percentages into a CSV dataset (`dataset.csv`) and SQLite DB (`telemetry.db`) for offline ML training or auditing.
+- **Intelligent Decision Engine**: Simulates "what-if" scenarios for heavy elephant flows, calculating k-shortest paths to bypass predicted bottlenecks.
+- **IEEE 802.1Q (VLANs)**: Implements tenant isolation and routes traffic on the core exclusively via VLAN tags.
+- **IEEE 802.1X (Network Access Control)**: Employs MAC Authentication Bypass (MAB) to identify and drop unauthorized traffic at the edge.
+- **Telemetry Streaming**: Sub-second ZeroMQ (ZMQ) streams push telemetry from Ryu to the Digital Twin, bypassing the sluggish REST API.
+- **Time-Series Database**: Natively exposes `sdn_link_utilization` gauges for **Prometheus**, allowing long-term historical retention and graphing.
+- **High Availability**: Features an Active-Standby controller clustering setup orchestrated via **Apache ZooKeeper** for seamless failover.
+- **Automated Actuation**: Communicates directly with the Ryu REST API to inject proactive OpenFlow routing rules (FlowMods).
 - **Live Web Dashboard**: Features a responsive Flask-based web application to visualize the network graph, live link utilization, and recently triggered autonomous reroutes.
 
 ---
@@ -77,48 +81,43 @@ The system is designed as a closed-loop control system:
 
 ## Detailed Component Breakdown
 
-### 1. SDN Environment
-Located in `sdn_env/topology.py`, this module utilizes Mininet to construct the physical (emulated) network topology. It deploys a series of Open vSwitches (OVS) running the OpenFlow 1.3 protocol and connects them to the Ryu RemoteController.
+### 1. SDN Environment & VLANs
+Located in `sdn_env/topology.py` and `sdn_env/init_routing.py`, this module utilizes Mininet to construct a redundant physical network. It uses OpenFlow 1.3 to push/pop VLANs at edge switches, enabling multi-tenant traffic isolation (IEEE 802.1Q) across the core.
 
-### 2. Telemetry Collector
-Located in `telemetry/collector.py`, this script interacts with Ryu's REST API (`/stats/port/ALL` and `/v1.0/topology/links`). It computes the deltas between byte counters over time to determine the current Tx/Rx bytes per second and logs this robustly into a local SQLite database (`telemetry.db`).
+### 2. Network Access Control (MAB)
+Located in `sdn_env/nac_mab.py`. Simulates IEEE 802.1X via MAC Authentication Bypass. The Ryu app intercepts `PacketIn` events, checks the source MAC against an allowed list, and instantly drops unauthorized rogue devices.
 
-### 3. Digital Twin Engine
+### 3. Telemetry Streamer & Prometheus
+Located in `sdn_env/telemetry_streamer.py`, this Ryu app requests stats sub-second and pushes them via a ZeroMQ (ZMQ) PUB socket. The Digital Twin subscribes to this socket, processing telemetry instantly and exposing Prometheus Gauges (`UTILIZATION_GAUGE`, `PREDICTED_UTIL_GAUGE`) on port 8000 for a Time-Series Database.
+
+### 4. Digital Twin Engine
 The heart of the project, located in `twin/digital_twin.py`. It:
-- Polles Ryu every few seconds.
+- Subscribes to ZMQ telemetry streams.
 - Reconstructs a NetworkX graph mirroring the SDN.
 - Calculates link utilization as a percentage of link capacity.
-- Evaluates the EWMA predictions to check for future congestion states.
+- Evaluates EWMA predictions to check for future congestion states.
 - Triggers the Decision Engine when limits are breached.
-- Records data continuously to `dataset.csv`.
+- Acts as a Prometheus metric exporter.
 
-### 4. Predictor Module
-Located in `twin/predictor.py`. Currently, it leverages an **Exponentially Weighted Moving Average (EWMA)** model. EWMA applies weighting factors which decrease exponentially, giving more importance to recent traffic observations, allowing the system to quickly adapt to sudden traffic bursts.
+### 5. High Availability Manager
+Located in `sdn_env/ha_manager.py`. Uses Apache ZooKeeper and the `kazoo` library to manage Active-Standby clustering. Multiple controllers can run, but only the elected Leader actually boots the Ryu process, enabling resilient failover.
 
-### 5. Decision Engine
-Located in `twin/decision_engine.py`. When an alarm is raised by the Digital Twin, this engine:
-1. Identifies the "Elephant Flow" causing the spike.
-2. Maps the source and destination MAC addresses to their attachment switches.
-3. Calculates `k` shortest alternative paths.
-4. Simulates applying the elephant flow to the alternative paths.
-5. Selects the best path that keeps all link utilizations below the safety threshold.
+### 6. Predictor & Decision Engine
+Located in `twin/predictor.py` and `twin/decision_engine.py`. Leverages an **Exponentially Weighted Moving Average (EWMA)** model to predict congestion. The Decision Engine then identifies "Elephant Flows" and calculates `k` shortest alternative paths to bypass predicted bottlenecks.
 
-### 6. Actuator
-Located in `twin/actuator.py`. It takes the path calculated by the Decision Engine and formats it into standard OpenFlow rules. It then issues HTTP POST requests to Ryu's `/stats/flowentry/add` endpoint to inject these rules into the forwarding tables of the switches.
-
-### 7. Web Dashboard
-Located in `dashboard/app.py`. A Flask server that runs the Digital Twin sync loop in a background daemon thread while simultaneously serving a web frontend. The UI consumes the `/api/state` endpoint to render dynamic D3.js or Chart.js visualisations of the network state.
+### 7. Actuator & Web Dashboard
+Located in `twin/actuator.py` and `dashboard/app.py`. The Actuator takes the path calculated by the Decision Engine and formats it into standard OpenFlow rules via REST. A Flask server runs the Digital Twin sync loop in a background daemon thread while simultaneously serving a web frontend for dynamic D3.js visualization.
 
 ---
 
 ## Prerequisites
 
-To run this project, you must be in an environment capable of running Mininet (typically a Linux VM like Ubuntu).
+To run this project, you must be in an environment capable of running Mininet (typically a Linux VM or WSL).
 
-- **OS**: Ubuntu 20.04 LTS or 22.04 LTS recommended.
+- **OS**: Ubuntu 20.04+ or WSL2.
 - **Python**: Python 3.8 or higher.
 - **Mininet**: `sudo apt-get install mininet`
-- **Ryu Controller**: Installed via pip (see below).
+- **ZooKeeper & Prometheus**: (Installed automatically via setup script)
 - **Git**: To clone the repository.
 
 ---
@@ -131,17 +130,18 @@ To run this project, you must be in an environment capable of running Mininet (t
    cd Digital-Twin-for-Proactive-SDN-Congestion-Prediction
    ```
 
-2. **Create a Virtual Environment (Optional but recommended)**
+2. **Create a Virtual Environment**
    ```bash
    python3 -m venv venv
    source venv/bin/activate
    ```
 
-3. **Install Python Dependencies**
+3. **Install Dependencies & Infrastructure**
    ```bash
    pip install -r requirements.txt
+   bash setup_infra.sh
    ```
-   *Note: Ensure you are using `eventlet==0.30.2` as specified in the requirements to avoid compatibility issues with Ryu.*
+   *Note: `setup_infra.sh` downloads Apache ZooKeeper and Prometheus binaries required for High Availability and Time-Series telemetry.*
 
 ---
 
@@ -149,36 +149,43 @@ To run this project, you must be in an environment capable of running Mininet (t
 
 Running the full system requires opening multiple terminal windows to run the components simultaneously.
 
-### Terminal 1: Start the Ryu Controller
-We run Ryu with the REST topology application enabled (without a learning switch to prevent broadcast storms).
+### Terminal 1: Infrastructure (ZooKeeper & Prometheus)
 ```bash
-cd sdn_env
-./start_controller.sh
-# OR manually:
-# ryu-manager ryu.app.ofctl_rest ryu.app.rest_topology --observe-links
+# Start ZooKeeper (background daemon)
+./apache-zookeeper-3.9.2-bin/bin/zkServer.sh start
+
+# Start Prometheus (foreground)
+./prometheus-2.54.1.linux-amd64/prometheus --config.file=prometheus.yml
 ```
+*(Prometheus UI available at http://localhost:9090)*
 
 ### Terminal 2: Start Mininet Topology
 Start the highly redundant Mininet network. This requires `sudo` privileges.
 ```bash
-cd sdn_env
-sudo python3 topology.py
-```
-*(Leave this running. You will get a `mininet>` prompt which you can use later to generate traffic).*
-
-### Terminal 3: Initialize Proactive Static Routing
-Wait about 10 seconds for Ryu to discover all the links, then run the startup routing script. This script acts as a proactive SDN controller, computing shortest paths and pre-installing flow rules for all hosts to ensure the network is loop-free and routed correctly.
-```bash
-~/venv/bin/python3 sdn_env/init_routing.py
+sudo python3 sdn_env/topology.py
 ```
 
-### Terminal 4: Start the Dashboard
-The Flask app will automatically spawn the Digital Twin Engine in a background thread.
+### Terminal 3: High Availability Ryu Controller
+Run the HA Manager, which uses ZooKeeper leader election to start the Ryu Controller.
 ```bash
-cd dashboard
-~/venv/bin/python3 app.py
+source ~/venv/bin/activate
+bash start_controller.sh
 ```
-Once started, the dashboard will be available at `http://localhost:5000`.
+
+### Terminal 4: Digital Twin & Web Dashboard
+The Flask app will start the ZMQ telemetry subscriber and Prometheus exporter.
+```bash
+source ~/venv/bin/activate
+python dashboard/app.py
+```
+*(Dashboard available at http://localhost:5000)*
+
+### Terminal 5: Initialize Proactive Static Routing
+Wait about 10 seconds for Ryu to discover all the links, then run the startup routing script. This script acts as a proactive SDN controller, computing shortest paths and pre-installing flow rules for all hosts with VLAN tagging.
+```bash
+source ~/venv/bin/activate
+python sdn_env/init_routing.py
+```
 
 ---
 

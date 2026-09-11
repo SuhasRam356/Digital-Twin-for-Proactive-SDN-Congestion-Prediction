@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 2s # Scrape every 2 seconds to match SDN twin updates
+  evaluation_interval: 2s
+
+scrape_configs:
+  - job_name: "sdn_telemetry"
+    static_configs:
+      - targets: ["localhost:8000"]

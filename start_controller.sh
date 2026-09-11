@@ -1,3 +1,3 @@
 #!/bin/bash
-echo "Starting Ryu Controller (REST API only, no learning switch)..."
-~/venv/bin/ryu-manager ryu.app.ofctl_rest ryu.app.rest_topology --observe-links
+echo "Starting Ryu Controller HA Manager (Active-Standby with ZooKeeper)..."
+python sdn_env/ha_manager.py
