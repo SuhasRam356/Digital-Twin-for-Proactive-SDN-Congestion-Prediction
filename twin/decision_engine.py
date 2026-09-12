@@ -66,8 +66,9 @@ class DecisionEngine:
                 best_max_util = max_util_in_sim
                 best_path = path
 
-        # 4. Pick best: accept if under safety_threshold (85%) OR strictly improves over the congested link
-        if best_path and (best_max_util < self.safety_threshold or best_max_util < congested_util):
+        # 4. Pick best: accept if under safety_threshold (85%) OR strictly improves over the congested link by a margin
+        min_gain = 5.0
+        if best_path and (best_max_util < self.safety_threshold or best_max_util <= congested_util - min_gain):
             print(f"[DecisionEngine] Selected path {best_path} with simulated max util {round(best_max_util,1)}%")
             return best_path, best_max_util
             

@@ -30,7 +30,12 @@ class Actuator:
             next_dpid = path[i+1]
             out_port = port_map.get((current_dpid, next_dpid))
             if out_port:
-                role = "ingress" if i == 0 else "core"
+                if i == 0:
+                    role = "ingress"
+                elif i == len(path) - 2:
+                    role = "egress"
+                else:
+                    role = "core"
                 self._add_flow(current_dpid, src_mac, dst_mac, out_port, priority=100, vlan_id=vlan_id, role=role)
                 
         # Reverse Path (dst_mac -> src_mac)
@@ -41,7 +46,12 @@ class Actuator:
                 next_dpid = rev_path[i+1]
                 out_port = port_map.get((current_dpid, next_dpid))
                 if out_port:
-                    role = "ingress" if i == 0 else "core"
+                    if i == 0:
+                        role = "ingress"
+                    elif i == len(rev_path) - 2:
+                        role = "egress"
+                    else:
+                        role = "core"
                     self._add_flow(current_dpid, dst_mac, src_mac, out_port, priority=100, vlan_id=vlan_id, role=role)
 
         print("[Actuator] Reroute successfully installed.")
@@ -108,6 +118,7 @@ class Actuator:
                 tagged_match["dl_vlan"] = vlan_id
                 tagged_payload = dict(payload)
                 tagged_payload["match"] = tagged_match
+                tagged_payload["priority"] = 101
                 tagged_payload["actions"] = [{"type": "OUTPUT", "port": out_port}]
                 requests.post(url, json=tagged_payload, timeout=2)
 

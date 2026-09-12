@@ -286,16 +286,18 @@ class DigitalTwin:
 
             # Look up byte counters (stats keys are *decimal* dpid strings)
             src_key = str(self._dpid_to_int(src_dpid))
+            if src_key not in port_stats:
+                continue
+
             tx_bytes = rx_bytes = 0
             stats_time = now
-            if src_key in port_stats:
-                ps_data = port_stats[src_key]
-                if isinstance(ps_data, dict) and "stats" in ps_data:
-                    stats_list = ps_data["stats"]
-                    stats_time = ps_data.get("time", now)
-                else:
-                    stats_list = ps_data # Fallback just in case
-                for ps in stats_list:
+            ps_data = port_stats[src_key]
+            if isinstance(ps_data, dict) and "stats" in ps_data:
+                stats_list = ps_data["stats"]
+                stats_time = ps_data.get("time", now)
+            else:
+                stats_list = ps_data # Fallback just in case
+            for ps in stats_list:
                     if ps["port_no"] == src_port:
                         tx_bytes = ps.get("tx_bytes", 0)
                         rx_bytes = ps.get("rx_bytes", 0)
@@ -347,15 +349,15 @@ class DigitalTwin:
             util = (max(tx_rate, rx_rate) / cap * 100) if cap else 0
             util = round(min(util, 100.0), 2)
 
-            # Predict future utilization using EWMA
-            predicted_util = self.predictor.predict(lk, util)
-
-            # Update Prometheus metrics
-            UTILIZATION_GAUGE.labels(src_dpid, dst_dpid).set(util)
-            PREDICTED_UTIL_GAUGE.labels(src_dpid, dst_dpid).set(predicted_util)
-
-            # Log to CSV only when counters actually updated
             if is_new_update:
+                # Predict future utilization using EWMA
+                predicted_util = self.predictor.predict(lk, util)
+
+                # Update Prometheus metrics
+                UTILIZATION_GAUGE.labels(src_dpid, dst_dpid).set(util)
+                PREDICTED_UTIL_GAUGE.labels(src_dpid, dst_dpid).set(predicted_util)
+
+                # Log to CSV only when counters actually updated
                 with open(self.csv_file, mode='a', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow([
@@ -366,6 +368,8 @@ class DigitalTwin:
                         util,
                         predicted_util
                     ])
+            else:
+                predicted_util = self.predictor.predictions.get(lk, 0.0)
 
             if g.has_edge(src_dpid, dst_dpid):
                 # Merge: keep the higher utilisation direction
@@ -424,6 +428,9 @@ class DigitalTwin:
         Scans all links for predicted congestion (>85%).
         If found, tracks the heavy flow and triggers the decision engine.
         """
+        current_time = time.time()
+        self.active_reroutes = [r for r in self.active_reroutes if current_time - r["timestamp"] < 30]
+        
         self._flow_stats_cache.clear()
         for u, v, data in self.graph.edges(data=True):
             if data.get("link_type") != "switch":

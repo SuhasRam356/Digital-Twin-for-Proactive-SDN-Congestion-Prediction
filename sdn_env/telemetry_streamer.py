@@ -70,7 +70,7 @@ class TelemetryStreamer(app_manager.RyuApp):
             "dpid": dpid,
             "stats": stats
         }
-        self.zmq_socket.send_string("telemetry " + json.dumps(payload))
+        self.zmq_socket.send_string("telemetry " + json.dumps(payload, default=str))
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
@@ -120,4 +120,4 @@ class TelemetryStreamer(app_manager.RyuApp):
             "dpid": dpid,
             "flows": serializable_flows
         }
-        self.zmq_socket.send_string("telemetry " + json.dumps(payload))
+        self.zmq_socket.send_string("telemetry " + json.dumps(payload, default=str))
