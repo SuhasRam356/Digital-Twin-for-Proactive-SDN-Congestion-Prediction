@@ -1,6 +1,6 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
+import pandas as pd  # type: ignore
+import matplotlib.pyplot as plt  # type: ignore
+import numpy as np  # type: ignore
 import os
 
 # Configuration

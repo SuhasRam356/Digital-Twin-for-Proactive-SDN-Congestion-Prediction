@@ -2,8 +2,8 @@ import sys
 import os
 import subprocess
 import time
-from kazoo.client import KazooClient
-from kazoo.recipe.election import Election
+from kazoo.client import KazooClient  # type: ignore
+from kazoo.recipe.election import Election  # type: ignore
 
 # Configuration
 ZK_HOSTS = os.environ.get("ZK_HOSTS", "127.0.0.1:2181")

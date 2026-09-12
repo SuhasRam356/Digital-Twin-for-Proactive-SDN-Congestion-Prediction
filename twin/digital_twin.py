@@ -8,13 +8,13 @@ REST API.
 
 import time
 import threading
-import requests
-import networkx as nx
+import requests  # type: ignore
+import networkx as nx  # type: ignore
 import csv
 import os
-import zmq
+import zmq  # type: ignore
 import json
-from prometheus_client import start_http_server, Gauge
+from prometheus_client import start_http_server, Gauge  # type: ignore
 from datetime import datetime
 from twin.predictor import EWMAPredictor
 from twin.decision_engine import DecisionEngine

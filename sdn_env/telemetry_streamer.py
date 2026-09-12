@@ -1,9 +1,9 @@
-from ryu.base import app_manager
-from ryu.controller import ofp_event
-from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER
-from ryu.controller.handler import set_ev_cls
-from ryu.lib import hub
-import zmq
+from ryu.base import app_manager  # type: ignore
+from ryu.controller import ofp_event  # type: ignore
+from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER  # type: ignore
+from ryu.controller.handler import set_ev_cls  # type: ignore
+from ryu.lib import hub  # type: ignore
+import zmq  # type: ignore
 import json
 
 class TelemetryStreamer(app_manager.RyuApp):
