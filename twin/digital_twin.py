@@ -104,63 +104,80 @@ class DigitalTwin:
             self.links = self._fetch("/v1.0/topology/links") or []
             self.hosts = self._fetch("/v1.0/topology/hosts") or []
             self.is_connected = True
-            
-            # Start background ZMQ loop
-            t = threading.Thread(target=self._zmq_loop, daemon=True)
-            t.start()
         except Exception as e:
             print(f"[Twin] Initial sync error: {e}")
             self.is_connected = False
+            
+        # Start background ZMQ loop regardless of initial sync success
+        t = threading.Thread(target=self._zmq_loop, daemon=True)
+        t.start()
 
     def _zmq_loop(self):
         print("[Twin] Listening for ZMQ telemetry streams...")
+        import zmq  # type: ignore
+        last_topo_time = 0
         while True:
             try:
-                msg = self.zmq_socket.recv_string()
-                topic, data_str = msg.split(" ", 1)
-                data = json.loads(data_str)
-                
-                if data["type"] == "port_stats":
-                    dpid = str(data["dpid"])
-                    self.latest_port_stats[dpid] = {
-                        "stats": data["stats"],
-                        "time": time.time()
-                    }
-                    
-                    with self.lock:
-                        self._rebuild(self.switches, self.links, self.hosts, self.latest_port_stats)
-                        self.last_sync = datetime.now()
-                        self.sync_count += 1
-                elif data["type"] == "flow_stats":
-                    dpid = data["dpid"]
-                    flows = data.get("flows", [])
-                    now = time.time()
-                    for f in flows:
-                        match = f.get("match", {})
-                        actions = f.get("actions", [])
-                        b_count = f.get("byte_count", 0)
-                        fk = f"{dpid}_{match.get('dl_src')}_{match.get('dl_dst')}_{match.get('dl_vlan')}_{str(actions)}"
-                        if fk in self._prev_flow_stats:
-                            prev = self._prev_flow_stats[fk]
-                            dt = now - prev["time"]
-                            delta = b_count - prev["bytes"]
-                            if dt > 0 and delta >= 0:
-                                rate = delta / dt
-                            else:
-                                rate = prev.get("last_rate", 0.0)
-                            self._prev_flow_stats[fk] = {"bytes": b_count, "time": now, "last_rate": rate}
-                        else:
-                            rate = 0.0
-                            self._prev_flow_stats[fk] = {"bytes": b_count, "time": now, "last_rate": rate}
-                        f["tx_rate_bytes"] = rate
+                # Update topology every 5 seconds (driven by telemetry messages)
+                now_topo = time.time()
+                if now_topo - last_topo_time > 5.0:
+                    try:
+                        self.switches = self._fetch("/v1.0/topology/switches") or []
+                        self.links = self._fetch("/v1.0/topology/links") or []
+                        self.hosts = self._fetch("/v1.0/topology/hosts") or []
+                        self.is_connected = True
+                    except Exception:
+                        pass
+                    last_topo_time = now_topo
 
-                    with self.lock:
-                        self.latest_flow_stats[dpid] = flows
-                        self.latest_flow_stats[str(dpid)] = flows
-                        try:
-                            self.latest_flow_stats[int(dpid)] = flows
-                        except (ValueError, TypeError):
-                            pass
+                # Use poll so we don't block forever if telemetry dies
+                # Use poll so we don't block forever if telemetry dies
+                if self.zmq_socket.poll(1000):
+                    msg = self.zmq_socket.recv_string()
+                    topic, data_str = msg.split(" ", 1)
+                    data = json.loads(data_str)
+                    
+                    if data["type"] == "port_stats":
+                        dpid = str(data["dpid"])
+                        self.latest_port_stats[dpid] = {
+                            "stats": data["stats"],
+                            "time": time.time()
+                        }
+                        
+                        with self.lock:
+                            self._rebuild(self.switches, self.links, self.hosts, self.latest_port_stats)
+                            self.last_sync = datetime.now()
+                            self.sync_count += 1
+                    elif data["type"] == "flow_stats":
+                        dpid = data["dpid"]
+                        flows = data.get("flows", [])
+                        now = time.time()
+                        for f in flows:
+                            match = f.get("match", {})
+                            actions = f.get("actions", [])
+                            b_count = f.get("byte_count", 0)
+                            fk = f"{dpid}_{match.get('dl_src')}_{match.get('dl_dst')}_{match.get('dl_vlan')}_{str(actions)}"
+                            if fk in self._prev_flow_stats:
+                                prev = self._prev_flow_stats[fk]
+                                dt = now - prev["time"]
+                                delta = b_count - prev["bytes"]
+                                if dt > 0 and delta >= 0:
+                                    rate = delta / dt
+                                else:
+                                    rate = prev.get("last_rate", 0.0)
+                                self._prev_flow_stats[fk] = {"bytes": b_count, "time": now, "last_rate": rate}
+                            else:
+                                rate = 0.0
+                                self._prev_flow_stats[fk] = {"bytes": b_count, "time": now, "last_rate": rate}
+                            f["tx_rate_bytes"] = rate
+
+                        with self.lock:
+                            self.latest_flow_stats[dpid] = flows
+                            self.latest_flow_stats[str(dpid)] = flows
+                            try:
+                                self.latest_flow_stats[int(dpid)] = flows
+                            except (ValueError, TypeError):
+                                pass
             except Exception as e:
                 print(f"[Twin] ZMQ loop error: {e}")
 
