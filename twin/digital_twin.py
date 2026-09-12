@@ -122,7 +122,10 @@ class DigitalTwin:
                 
                 if data["type"] == "port_stats":
                     dpid = str(data["dpid"])
-                    self.latest_port_stats[dpid] = data["stats"]
+                    self.latest_port_stats[dpid] = {
+                        "stats": data["stats"],
+                        "time": time.time()
+                    }
                     
                     with self.lock:
                         self._rebuild(self.switches, self.links, self.hosts, self.latest_port_stats)
@@ -284,47 +287,60 @@ class DigitalTwin:
             # Look up byte counters (stats keys are *decimal* dpid strings)
             src_key = str(self._dpid_to_int(src_dpid))
             tx_bytes = rx_bytes = 0
+            stats_time = now
             if src_key in port_stats:
-                for ps in port_stats[src_key]:
+                ps_data = port_stats[src_key]
+                if isinstance(ps_data, dict) and "stats" in ps_data:
+                    stats_list = ps_data["stats"]
+                    stats_time = ps_data.get("time", now)
+                else:
+                    stats_list = ps_data # Fallback just in case
+                for ps in stats_list:
                     if ps["port_no"] == src_port:
                         tx_bytes = ps.get("tx_bytes", 0)
                         rx_bytes = ps.get("rx_bytes", 0)
                         break
 
             # Compute byte-rate since last poll.
-            # Key insight: ZMQ delivers per-switch replies, so each
-            # _rebuild sees counter updates for only ONE switch.
-            # We must track prev counters AND prev time *per link key*
-            # and skip recomputation when counters haven't changed.
             lk = f"{src_dpid}:{src_port}"
             tx_rate = 0.0
             rx_rate = 0.0
             util = 0.0
+            is_new_update = False
 
             if lk in self._prev_stats:
                 prev = self._prev_stats[lk]
-                delta_tx = tx_bytes - prev["tx"]
-                delta_rx = rx_bytes - prev["rx"]
-
-                if delta_tx != 0 or delta_rx != 0:
-                    # Counters actually changed → real update arrived
-                    dt = now - prev["time"]
+                if stats_time > prev["time"]:
+                    # A new stat update arrived for this switch since last time we computed rate
+                    delta_tx = tx_bytes - prev["tx"]
+                    delta_rx = rx_bytes - prev["rx"]
+                    dt = stats_time - prev["time"]
+                    
                     if dt > 0:
                         tx_rate = max(0.0, delta_tx / dt)
                         rx_rate = max(0.0, delta_rx / dt)
-                    # Store updated counters and timestamp
-                    self._prev_stats[lk] = {"tx": tx_bytes, "rx": rx_bytes, "time": now}
+                        
+                    self._prev_stats[lk] = {
+                        "tx": tx_bytes,
+                        "rx": rx_bytes,
+                        "time": stats_time,
+                        "last_tx_rate": tx_rate,
+                        "last_rx_rate": rx_rate
+                    }
+                    is_new_update = True
                 else:
-                    # Counters unchanged → stale rebuild, reuse last known rate
+                    # No new stats for this switch, reuse last rate
                     tx_rate = prev.get("last_tx_rate", 0.0)
                     rx_rate = prev.get("last_rx_rate", 0.0)
             else:
-                # First observation for this link — seed it, rate stays 0
-                self._prev_stats[lk] = {"tx": tx_bytes, "rx": rx_bytes, "time": now}
-
-            # Cache the computed rates back for stale-rebuild reuse
-            self._prev_stats[lk]["last_tx_rate"] = tx_rate
-            self._prev_stats[lk]["last_rx_rate"] = rx_rate
+                self._prev_stats[lk] = {
+                    "tx": tx_bytes,
+                    "rx": rx_bytes,
+                    "time": stats_time,
+                    "last_tx_rate": 0.0,
+                    "last_rx_rate": 0.0
+                }
+                is_new_update = True
 
             # Utilization %  (capacity in bytes/s)
             cap = (self.link_capacity_mbps * 1_000_000) / 8
@@ -338,17 +354,18 @@ class DigitalTwin:
             UTILIZATION_GAUGE.labels(src_dpid, dst_dpid).set(util)
             PREDICTED_UTIL_GAUGE.labels(src_dpid, dst_dpid).set(predicted_util)
 
-            # Log to CSV
-            with open(self.csv_file, mode='a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    datetime.now().isoformat(),
-                    f"{src_dpid}-{dst_dpid}",
-                    src_port, dst_port,
-                    round(tx_rate, 2),
-                    util,
-                    predicted_util
-                ])
+            # Log to CSV only when counters actually updated
+            if is_new_update:
+                with open(self.csv_file, mode='a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        datetime.now().isoformat(),
+                        f"{src_dpid}-{dst_dpid}",
+                        src_port, dst_port,
+                        round(tx_rate, 2),
+                        util,
+                        predicted_util
+                    ])
 
             if g.has_edge(src_dpid, dst_dpid):
                 # Merge: keep the higher utilisation direction

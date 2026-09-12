@@ -10,23 +10,39 @@ OUTPUT_DIR = 'evaluation_results'
 
 def calculate_metrics(df):
     """Calculate MAE and RMSE for EWMA predictor."""
-    # The predictor predicts the NEXT timestep's utilization.
-    # So we shift the actual utilization back by 1 to align them.
-    actual = df['utilization'].values[1:]
-    predicted = df['predicted_utilization'].values[:-1]
+    # Filter out absolute zero startup rows if they dominate
+    active_df = df[df['utilization'] > 0]
+    if active_df.empty:
+        active_df = df
+        
+    actual = active_df['utilization'].values[1:]
+    predicted = active_df['predicted_utilization'].values[:-1]
     
-    # Filter out exact 0s if they are just startup artifacts, but we'll use all for now
+    if len(actual) == 0:
+        return 0.0, 0.0
+        
     mae = np.mean(np.abs(actual - predicted))
     rmse = np.sqrt(np.mean((actual - predicted)**2))
     return mae, rmse
 
-def plot_prediction_accuracy(df, output_path):
+def plot_prediction_accuracy(df, target_link, output_path):
     plt.figure(figsize=(10, 5))
-    # We plot the first 100 points for clarity
-    subset = df.head(100)
+    link_df = df[df['link_id'] == target_link].copy()
+    
+    # Skip leading zeros
+    non_zero_idx = link_df[link_df['utilization'] > 0].index
+    if len(non_zero_idx) > 0:
+        first_idx = non_zero_idx[0]
+        # Keep 5 points before the first non-zero for context
+        start_idx = max(0, link_df.index.get_loc(first_idx) - 5)
+        link_df = link_df.iloc[start_idx:]
+    
+    link_df = link_df.reset_index(drop=True)
+    subset = link_df.head(100)
+    
     plt.plot(subset.index, subset['utilization'], label='Actual Utilization', color='blue', linewidth=2)
     plt.plot(subset.index, subset['predicted_utilization'].shift(1), label='Predicted Utilization (EWMA)', color='red', linestyle='--')
-    plt.title('EWMA Prediction Accuracy on Link Utilization')
+    plt.title(f'EWMA Prediction Accuracy on Link {target_link}')
     plt.xlabel('Time (Sync Intervals)')
     plt.ylabel('Utilization (%)')
     plt.legend()
@@ -41,7 +57,7 @@ def plot_congestion_comparison(df_base, df_pro, target_link, output_path):
     
     plt.figure(figsize=(12, 6))
     if base_link is not None and not base_link.empty:
-        plt.plot(base_link.index, base_link['utilization'], label='Baseline (Reactive ECMP)', color='red')
+        plt.plot(base_link.index, base_link['utilization'], label='Baseline (Static Routing)', color='red')
     if pro_link is not None and not pro_link.empty:
         plt.plot(pro_link.index, pro_link['utilization'], label='Digital Twin (Proactive Reroute)', color='green')
         
@@ -59,7 +75,7 @@ def plot_peak_utilization_bar(df_base, df_pro, target_link, output_path):
     base_peak = df_base[df_base['link_id'] == target_link]['utilization'].max() if df_base is not None else 0
     pro_peak = df_pro[df_pro['link_id'] == target_link]['utilization'].max() if df_pro is not None else 0
     
-    labels = ['Baseline (Reactive)', 'Digital Twin (Proactive)']
+    labels = ['Baseline (Static)', 'Digital Twin (Proactive)']
     peaks = [base_peak, pro_peak]
     colors = ['red', 'green']
     
@@ -93,7 +109,6 @@ def main():
         print(f"Loaded {BASELINE_CSV} ({len(df_base)} rows)")
         mae, rmse = calculate_metrics(df_base)
         print(f"[EWMA Predictor Baseline] MAE: {mae:.2f}%, RMSE: {rmse:.2f}%")
-        plot_prediction_accuracy(df_base, os.path.join(OUTPUT_DIR, 'ewma_accuracy_baseline.png'))
     else:
         print(f"WARNING: {BASELINE_CSV} not found. Skip baseline plotting.")
         
@@ -113,6 +128,8 @@ def main():
             target_link = df_pro.groupby('link_id')['utilization'].max().idxmax()
             
         print(f"Generating comparison charts for most congested link: {target_link}")
+        if df_base is not None:
+            plot_prediction_accuracy(df_base, target_link, os.path.join(OUTPUT_DIR, 'ewma_accuracy_baseline.png'))
         plot_congestion_comparison(df_base, df_pro, target_link, os.path.join(OUTPUT_DIR, 'congestion_over_time.png'))
         plot_peak_utilization_bar(df_base, df_pro, target_link, os.path.join(OUTPUT_DIR, 'peak_utilization.png'))
         print(f"Charts saved to {OUTPUT_DIR}/")

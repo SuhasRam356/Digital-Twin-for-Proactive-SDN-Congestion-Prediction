@@ -217,7 +217,7 @@ To test the proactive congestion prediction, you need to generate traffic within
 ## Phase 5 Evaluation Results
 
 The system was systematically evaluated by simulating heavy Elephant Flows and capturing the network state telemetry. 
-We compared a reactive-only network (Baseline) with standard ECMP against our proactive Digital Twin network. 
+We compared a static routing network (Baseline) against our proactive Digital Twin network. 
 
 ### 1. EWMA Predictor Accuracy
 The predictor attempts to forecast the near-future utilization of every link based on recent telemetry observations. Below is the EWMA predictor tracking a highly variable traffic burst on a core link. 
