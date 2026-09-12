@@ -259,16 +259,40 @@ class DigitalTwin:
                         rx_bytes = ps.get("rx_bytes", 0)
                         break
 
-            # Compute byte-rate since last poll
+            # Compute byte-rate since last poll.
+            # Key insight: ZMQ delivers per-switch replies, so each
+            # _rebuild sees counter updates for only ONE switch.
+            # We must track prev counters AND prev time *per link key*
+            # and skip recomputation when counters haven't changed.
             lk = f"{src_dpid}:{src_port}"
-            tx_rate = rx_rate = 0.0
-            if lk in self._prev_stats and self._prev_time:
-                dt = now - self._prev_time
-                if dt > 0:
-                    p = self._prev_stats[lk]
-                    tx_rate = max(0.0, (tx_bytes - p["tx"]) / dt)
-                    rx_rate = max(0.0, (rx_bytes - p["rx"]) / dt)
-            self._prev_stats[lk] = {"tx": tx_bytes, "rx": rx_bytes}
+            tx_rate = 0.0
+            rx_rate = 0.0
+            util = 0.0
+
+            if lk in self._prev_stats:
+                prev = self._prev_stats[lk]
+                delta_tx = tx_bytes - prev["tx"]
+                delta_rx = rx_bytes - prev["rx"]
+
+                if delta_tx != 0 or delta_rx != 0:
+                    # Counters actually changed → real update arrived
+                    dt = now - prev["time"]
+                    if dt > 0:
+                        tx_rate = max(0.0, delta_tx / dt)
+                        rx_rate = max(0.0, delta_rx / dt)
+                    # Store updated counters and timestamp
+                    self._prev_stats[lk] = {"tx": tx_bytes, "rx": rx_bytes, "time": now}
+                else:
+                    # Counters unchanged → stale rebuild, reuse last known rate
+                    tx_rate = prev.get("last_tx_rate", 0.0)
+                    rx_rate = prev.get("last_rx_rate", 0.0)
+            else:
+                # First observation for this link — seed it, rate stays 0
+                self._prev_stats[lk] = {"tx": tx_bytes, "rx": rx_bytes, "time": now}
+
+            # Cache the computed rates back for stale-rebuild reuse
+            self._prev_stats[lk]["last_tx_rate"] = tx_rate
+            self._prev_stats[lk]["last_rx_rate"] = rx_rate
 
             # Utilization %  (capacity in bytes/s)
             cap = (self.link_capacity_mbps * 1_000_000) / 8
@@ -319,7 +343,6 @@ class DigitalTwin:
                            predicted_utilization=predicted_util,
                            capacity_mbps=self.link_capacity_mbps)
 
-        self._prev_time = now
         self.graph = g
 
         # Phase 4: Proactive Rerouting Logic
