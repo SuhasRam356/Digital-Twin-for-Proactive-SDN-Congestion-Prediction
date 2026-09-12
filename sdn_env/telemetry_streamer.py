@@ -99,6 +99,15 @@ class TelemetryStreamer(app_manager.RyuApp):
                             actions.append(f"OUTPUT:{action.port}")
             
             match_dict = dict(stat.match.items())
+            if "eth_dst" in match_dict and "dl_dst" not in match_dict:
+                match_dict["dl_dst"] = match_dict["eth_dst"]
+            if "eth_src" in match_dict and "dl_src" not in match_dict:
+                match_dict["dl_src"] = match_dict["eth_src"]
+            if "vlan_vid" in match_dict and "dl_vlan" not in match_dict:
+                vid = match_dict["vlan_vid"]
+                if isinstance(vid, (list, tuple)):
+                    vid = vid[0]
+                match_dict["dl_vlan"] = str(vid & ~0x1000) if isinstance(vid, int) else str(vid)
             
             serializable_flows.append({
                 "match": match_dict,

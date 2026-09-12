@@ -65,6 +65,8 @@ class DigitalTwin:
         self._prev_time = None
         self.port_map = {}
         self._flow_stats_cache = {}
+        self.latest_port_stats = {}
+        self.latest_flow_stats = {}
         
         # Phase 4 components
         # In baseline mode (no rerouting), we set trigger_threshold to >100% so it never fires.
@@ -111,7 +113,6 @@ class DigitalTwin:
 
     def _zmq_loop(self):
         print("[Twin] Listening for ZMQ telemetry streams...")
-        self.latest_port_stats = {}
         while True:
             try:
                 msg = self.zmq_socket.recv_string()
@@ -126,6 +127,16 @@ class DigitalTwin:
                         self._rebuild(self.switches, self.links, self.hosts, self.latest_port_stats)
                         self.last_sync = datetime.now()
                         self.sync_count += 1
+                elif data["type"] == "flow_stats":
+                    dpid = data["dpid"]
+                    flows = data.get("flows", [])
+                    with self.lock:
+                        self.latest_flow_stats[dpid] = flows
+                        self.latest_flow_stats[str(dpid)] = flows
+                        try:
+                            self.latest_flow_stats[int(dpid)] = flows
+                        except (ValueError, TypeError):
+                            pass
             except Exception as e:
                 print(f"[Twin] ZMQ loop error: {e}")
 
@@ -396,7 +407,8 @@ class DigitalTwin:
                 if not heavy_flow:
                     continue
                 
-                dst_mac = heavy_flow["match"].get("dl_dst")
+                match = heavy_flow.get("match", {})
+                dst_mac = match.get("dl_dst") or match.get("eth_dst")
                 if not dst_mac:
                     continue
 
@@ -406,16 +418,36 @@ class DigitalTwin:
                 
                 # Mock a flow_data dict with just enough info for the decision engine
                 # Get real source MAC if available, else default to "any"
-                src_mac = heavy_flow["match"].get("dl_src", "any")
-                dst_mac = heavy_flow["match"].get("dl_dst", "any")
-                vlan_id = heavy_flow["match"].get("dl_vlan", None)
-                flow_id = f"{src_mac}_{dst_mac}_{vlan_id}_{heavy_flow['match'].get('in_port', 'any')}"
+                src_mac = match.get("dl_src") or match.get("eth_src") or "any"
+                vlan_id = match.get("dl_vlan") or match.get("vlan_vid")
+                if vlan_id is not None:
+                    try:
+                        if isinstance(vlan_id, (list, tuple)):
+                            vlan_id = vlan_id[0]
+                        vlan_id = int(str(vlan_id), 0)
+                        if vlan_id & 0x1000:
+                            vlan_id = vlan_id & ~0x1000
+                    except (ValueError, TypeError):
+                        vlan_id = None
+
+                # Fallback to known static VLANs if not in match
+                if vlan_id is None:
+                    STATIC_VLANS = {
+                        "00:00:00:00:00:01": 10,
+                        "00:00:00:00:00:04": 10,
+                        "00:00:00:00:00:02": 20,
+                        "00:00:00:00:00:03": 20,
+                    }
+                    vlan_id = STATIC_VLANS.get(src_mac) or STATIC_VLANS.get(dst_mac)
+
+                flow_id = f"{src_mac}_{dst_mac}_{vlan_id}_{match.get('in_port', 'any')}"
 
                 # Flapping protection: Have we already rerouted this specific flow recently?
                 if any(r["flow_id"] == flow_id for r in self.active_reroutes):
                     continue
                 
-                print(f"[Twin] WARNING: Link {u}-{v} predicted to reach {pred_util:.1f}%. Triggering reroute for {src_mac}->{dst_mac} (VLAN {vlan_id})...")
+                vlan_str = f" (VLAN {vlan_id})" if vlan_id is not None else ""
+                print(f"[Twin] WARNING: Link {u}-{v} predicted to reach {pred_util:.1f}%. Triggering reroute for {src_mac}->{dst_mac}{vlan_str}...")
                 
                 flow_data = {
                     "src_mac": src_mac,
@@ -442,15 +474,17 @@ class DigitalTwin:
                     self.active_reroutes = self.active_reroutes[:10]
 
     def _find_heavy_flow(self, dpid_int, out_port):
-        """Polls /stats/flow/{dpid} to find the flow with highest bytes exiting out_port."""
-        if dpid_int not in self._flow_stats_cache:
-            flow_stats = self._fetch(f"/stats/flow/{dpid_int}")
-            if flow_stats and str(dpid_int) in flow_stats:
-                self._flow_stats_cache[dpid_int] = flow_stats[str(dpid_int)]
-            else:
-                self._flow_stats_cache[dpid_int] = []
+        """Finds the flow with highest bytes exiting out_port, preferring streamed ZMQ flow stats, falling back to REST."""
+        flows = self.latest_flow_stats.get(dpid_int) or self.latest_flow_stats.get(str(dpid_int))
+        if not flows:
+            if dpid_int not in self._flow_stats_cache:
+                flow_stats = self._fetch(f"/stats/flow/{dpid_int}")
+                if flow_stats and str(dpid_int) in flow_stats:
+                    self._flow_stats_cache[dpid_int] = flow_stats[str(dpid_int)]
+                else:
+                    self._flow_stats_cache[dpid_int] = []
+            flows = self._flow_stats_cache[dpid_int]
 
-        flows = self._flow_stats_cache[dpid_int]
         heavy_flow = None
         max_bytes = -1
         

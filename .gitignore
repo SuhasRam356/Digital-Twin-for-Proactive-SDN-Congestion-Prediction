@@ -12,6 +12,7 @@ telemetry.db
 apache-zookeeper-*/
 *.tar.gz
 prometheus-*/
+ryu-src/
 
 # Datasets & Data
 data/
