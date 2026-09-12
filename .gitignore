@@ -7,3 +7,12 @@ __pycache__/
 dataset.csv
 telemetry.db
 *.metadata.json
+
+# Infrastructure
+apache-zookeeper-*/
+*.tar.gz
+prometheus-*/
+
+# Datasets & Data
+data/
+eval_*.csv

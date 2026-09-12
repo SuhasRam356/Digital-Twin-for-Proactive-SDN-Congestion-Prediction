@@ -43,7 +43,7 @@ class NAC_MAB(app_manager.RyuApp):
             self.logger.warning(f"[NAC] Unauthorized host detected! Dropping traffic from MAC: {src_mac}")
             
             # Install a high priority drop rule for this unauthorized MAC
-            match = parser.OFPMatch(dl_src=src_mac)
+            match = parser.OFPMatch(eth_src=src_mac)
             actions = [] # Empty actions = DROP
             
             inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
