@@ -9,3 +9,6 @@ prometheus-client
 pyzmq
 kazoo
 ryu
+pandas
+matplotlib
+numpy

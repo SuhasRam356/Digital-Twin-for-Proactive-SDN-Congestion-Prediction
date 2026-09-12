@@ -8,7 +8,9 @@ from kazoo.recipe.election import Election
 # Configuration
 ZK_HOSTS = os.environ.get("ZK_HOSTS", "127.0.0.1:2181")
 CONTROLLER_CMD = [
-    os.path.expanduser("~/venv/bin/ryu-manager"),
+    sys.executable,
+    "-m",
+    "ryu.cmd.manager",
     "ryu.app.ofctl_rest",
     "ryu.app.rest_topology",
     "sdn_env/nac_mab.py",

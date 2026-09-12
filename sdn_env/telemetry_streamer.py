@@ -121,3 +121,4 @@ class TelemetryStreamer(app_manager.RyuApp):
             "flows": serializable_flows
         }
         self.zmq_socket.send_string("telemetry " + json.dumps(payload, default=str))
+
