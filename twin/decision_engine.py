@@ -6,7 +6,7 @@ class DecisionEngine:
         self.safety_threshold = safety_threshold      # max util to accept a candidate as "safe enough"
         self.default_capacity_mbps = default_capacity_mbps
 
-    def decide_reroute(self, graph, congested_link, flow_data, port_map):
+    def decide_reroute(self, graph, congested_link, flow_data, port_map=None, src_switch=None):
         """
         Calculates an alternative path for the heavy flow that avoids the congested link.
         Returns (best_path, simulated_max_util) or (None, None) if no valid path exists.
@@ -14,12 +14,13 @@ class DecisionEngine:
         flow_data: dict containing 'src_mac', 'dst_mac', 'tx_rate_bytes'
         """
         u, v = congested_link
-        src_mac = flow_data['src_mac']
-        dst_mac = flow_data['dst_mac']
-        flow_rate_mbps = (flow_data['tx_rate_bytes'] * 8) / 1_000_000
+        src_mac = flow_data.get('src_mac', 'any')
+        dst_mac = flow_data.get('dst_mac', 'any')
+        flow_rate_mbps = (flow_data.get('tx_rate_bytes', 0) * 8) / 1_000_000
 
         # 1. Find the attachment switches for src and dst
-        src_switch = self._find_attachment_switch(graph, src_mac)
+        if not src_switch:
+            src_switch = self._find_attachment_switch(graph, src_mac) or u
         dst_switch = self._find_attachment_switch(graph, dst_mac)
         
         if not src_switch or not dst_switch:
@@ -33,9 +34,7 @@ class DecisionEngine:
 
         try:
             # Get shortest paths using NetworkX
-            candidates = list(nx.shortest_simple_paths(temp_graph, src_switch, dst_switch))
-            # Limit to top 3 alternatives
-            candidates = candidates[:3]
+            candidates = list(nx.shortest_simple_paths(temp_graph, src_switch, dst_switch))[:3]
         except nx.NetworkXNoPath:
             print("[DecisionEngine] No alternative paths available.")
             return None, None
@@ -44,18 +43,16 @@ class DecisionEngine:
         best_path = None
         best_max_util = float('inf')
 
+        # Current utilization of the congested link for comparison
+        congested_edge = graph[u][v] if graph.has_edge(u, v) else {}
+        congested_util = congested_edge.get('predicted_utilization', congested_edge.get('utilization', 100.0))
+
         for path in candidates:
-            # Simulate removing the flow's bandwidth from the congested link
-            # and adding it to all links in the new path.
-            sim_graph = graph.copy()
-            
-            # (In a highly accurate simulator, we'd subtract from the old path, 
-            # but for a PoC, just adding it to the new path and checking if it's safe is enough).
             max_util_in_sim = 0
             
             for i in range(len(path) - 1):
                 n1, n2 = path[i], path[i+1]
-                edge = sim_graph[n1][n2]
+                edge = graph[n1][n2]
                 
                 capacity_mbps = edge.get('capacity_mbps', self.default_capacity_mbps)
                 current_util = edge.get('predicted_utilization', edge.get('utilization', 0))
@@ -69,8 +66,8 @@ class DecisionEngine:
                 best_max_util = max_util_in_sim
                 best_path = path
 
-        # 4. Pick best
-        if best_path and best_max_util < self.safety_threshold:
+        # 4. Pick best: accept if under safety_threshold (85%) OR strictly improves over the congested link
+        if best_path and (best_max_util < self.safety_threshold or best_max_util < congested_util):
             print(f"[DecisionEngine] Selected path {best_path} with simulated max util {round(best_max_util,1)}%")
             return best_path, best_max_util
             

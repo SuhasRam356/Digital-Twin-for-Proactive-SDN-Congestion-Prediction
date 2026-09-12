@@ -67,6 +67,7 @@ class DigitalTwin:
         self._flow_stats_cache = {}
         self.latest_port_stats = {}
         self.latest_flow_stats = {}
+        self._prev_flow_stats = {}
         
         # Phase 4 components
         # In baseline mode (no rerouting), we set trigger_threshold to >100% so it never fires.
@@ -130,6 +131,26 @@ class DigitalTwin:
                 elif data["type"] == "flow_stats":
                     dpid = data["dpid"]
                     flows = data.get("flows", [])
+                    now = time.time()
+                    for f in flows:
+                        match = f.get("match", {})
+                        actions = f.get("actions", [])
+                        b_count = f.get("byte_count", 0)
+                        fk = f"{dpid}_{match.get('dl_src')}_{match.get('dl_dst')}_{match.get('dl_vlan')}_{str(actions)}"
+                        if fk in self._prev_flow_stats:
+                            prev = self._prev_flow_stats[fk]
+                            dt = now - prev["time"]
+                            delta = b_count - prev["bytes"]
+                            if dt > 0 and delta >= 0:
+                                rate = delta / dt
+                            else:
+                                rate = prev.get("last_rate", 0.0)
+                            self._prev_flow_stats[fk] = {"bytes": b_count, "time": now, "last_rate": rate}
+                        else:
+                            rate = 0.0
+                            self._prev_flow_stats[fk] = {"bytes": b_count, "time": now, "last_rate": rate}
+                        f["tx_rate_bytes"] = rate
+
                     with self.lock:
                         self.latest_flow_stats[dpid] = flows
                         self.latest_flow_stats[str(dpid)] = flows
@@ -449,14 +470,23 @@ class DigitalTwin:
                 vlan_str = f" (VLAN {vlan_id})" if vlan_id is not None else ""
                 print(f"[Twin] WARNING: Link {u}-{v} predicted to reach {pred_util:.1f}%. Triggering reroute for {src_mac}->{dst_mac}{vlan_str}...")
                 
+                flow_rate = heavy_flow.get("tx_rate_bytes", 0.0)
+                if flow_rate <= 0:
+                    port_flows = [fl for fl in self.latest_flow_stats.get(dpid_int, []) if f"OUTPUT:{out_port}" in fl.get("actions", [])]
+                    port_bytes = sum(fl.get("byte_count", 0) for fl in port_flows)
+                    if port_bytes > 0:
+                        flow_rate = data.get("tx_rate", 0) * (heavy_flow.get("byte_count", 0) / port_bytes)
+                    else:
+                        flow_rate = data.get("tx_rate", 0)
+
                 flow_data = {
                     "src_mac": src_mac,
                     "dst_mac": dst_mac,
-                    "tx_rate_bytes": data.get("tx_rate", 0)
+                    "tx_rate_bytes": flow_rate
                 }
                 
                 # 2. Trigger Decision Engine
-                best_path, sim_util = self._run_decision_engine(u, dst_mac, (u, v), flow_data)
+                best_path, sim_util = self.decision_engine.decide_reroute(self.graph, (u, v), flow_data, src_switch=u)
                 
                 # 3. Actuate!
                 if best_path:
@@ -500,41 +530,5 @@ class DigitalTwin:
         return heavy_flow
 
     def _run_decision_engine(self, src_switch, dst_mac, congested_link, flow_data):
-        """Wrapper for decision engine to start pathing from a specific switch instead of host."""
-        u, v = congested_link
-        dst_switch = self.decision_engine._find_attachment_switch(self.graph, dst_mac)
-        
-        if not dst_switch:
-            return None, None
-            
-        temp_graph = self.graph.copy()
-        if temp_graph.has_edge(u, v):
-            temp_graph.remove_edge(u, v)
-
-        try:
-            candidates = list(nx.shortest_simple_paths(temp_graph, src_switch, dst_switch))[:3]
-        except nx.NetworkXNoPath:
-            return None, None
-
-        best_path, best_max_util = None, float('inf')
-        flow_rate_mbps = (flow_data['tx_rate_bytes'] * 8) / 1_000_000
-
-        for path in candidates:
-            max_util_in_sim = 0
-            for i in range(len(path) - 1):
-                n1, n2 = path[i], path[i+1]
-                edge = self.graph[n1][n2]
-                cap = edge.get('capacity_mbps', 100)
-                cur = edge.get('predicted_utilization', edge.get('utilization', 0))
-                sim = cur + (flow_rate_mbps / cap * 100)
-                if sim > max_util_in_sim:
-                    max_util_in_sim = sim
-            if max_util_in_sim < best_max_util:
-                best_max_util = max_util_in_sim
-                best_path = path
-
-        if best_path and best_max_util < self.decision_engine.safety_threshold:
-            print(f"[DecisionEngine] Selected path {best_path} with simulated max util {round(best_max_util,1)}%")
-            return best_path, best_max_util
-            
-        return None, None
+        """Wrapper for decision engine delegating directly to DecisionEngine.decide_reroute."""
+        return self.decision_engine.decide_reroute(self.graph, congested_link, flow_data, src_switch=src_switch)
