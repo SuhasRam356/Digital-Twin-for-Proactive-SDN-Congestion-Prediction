@@ -8,3 +8,4 @@ prometheus-client
 
 pyzmq
 kazoo
+ryu
