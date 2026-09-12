@@ -147,9 +147,10 @@ To run this project, you must be in an environment capable of running Mininet (t
 
 ## Running the Application
 
-Running the full system requires opening multiple terminal windows to run the components simultaneously.
+This project is divided into a **Core ZMQ Pipeline** (guaranteed stability, predictive routing) and an **Advanced IEEE Features** pipeline (ZooKeeper HA, VLANs, MAC Authentication).
 
-### Terminal 1: Infrastructure (ZooKeeper & Prometheus)
+### Terminal 1: Infrastructure (For Advanced Features Only)
+*If you are only running the Core Pipeline, you can skip this step!*
 ```bash
 # Start ZooKeeper (background daemon)
 ./apache-zookeeper-3.9.2-bin/bin/zkServer.sh start
@@ -157,7 +158,6 @@ Running the full system requires opening multiple terminal windows to run the co
 # Start Prometheus (foreground)
 ./prometheus-2.54.1.linux-amd64/prometheus --config.file=prometheus.yml
 ```
-*(Prometheus UI available at http://localhost:9090)*
 
 ### Terminal 2: Start Mininet Topology
 Start the highly redundant Mininet network. This requires `sudo` privileges.
@@ -165,11 +165,20 @@ Start the highly redundant Mininet network. This requires `sudo` privileges.
 sudo python3 sdn_env/topology.py
 ```
 
-### Terminal 3: High Availability Ryu Controller
-Run the HA Manager, which uses ZooKeeper leader election to start the Ryu Controller.
+### Terminal 3: Start the Ryu Controller
+
+**Option A: Core ZMQ Pipeline (Recommended for Evaluation)**
+Runs the raw, high-speed Telemetry Streamer without complex dependencies.
 ```bash
 source ~/venv/bin/activate
 bash start_controller.sh
+```
+
+**Option B: Advanced IEEE Features**
+Runs the HA Manager, which uses ZooKeeper leader election to start the Ryu Controller along with VLANs and MAB.
+```bash
+source ~/venv/bin/activate
+bash start_controller_advanced.sh
 ```
 
 ### Terminal 4: Digital Twin & Web Dashboard
